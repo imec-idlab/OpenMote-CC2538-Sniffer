@@ -1,0 +1,5 @@
+bin/
+*.log
+*.bin
+*.hex
+*.elf
