@@ -1,16 +1,5 @@
 #!/usr/bin/python
 
-'''
-@file       test-serial.py
-@author     Pere Tuset-Peiro  (peretuset@openmote.com)
-@version    v0.1
-@date       May, 2015
-@brief      
-
-@copyright  Copyright 2015, OpenMote Technologies, S.L.
-            This file is licensed under the GNU General Public License v2.
-'''
-
 import serial
 import struct
 import os
@@ -215,11 +204,12 @@ def program():
                 else:
                     receiving = False
                     word = decode(word)[0]
-                    if len(word) > 0 and (count % 3000 != 0 or count == 0):
+                    if len(word) > 0:
                         count = (count+1) % 4294967296
                         receivedCount = (ord(word[8]) << 24) + (ord(word[9]) << 16) + (ord(word[10]) << 8) + ord(word[11])
                         print(str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
-                        if count < receivedCount:
+
+                        if count != receivedCount:
                             # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                             if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
                                 print("ERROR: Packet lost!")
@@ -231,11 +221,11 @@ def program():
                             faultyPacketIgnored = False
                             #ser.write(encode('ACK' + word[1] + word[2]))
                             #tun_interface.inject(word)
-                        
+
                         # Remember the index and sequence number of this packet in case the next one is corrupted
                         lastIndex = (ord(word[1]) << 8) + ord(word[2])
                         lastSeqNr = (ord(word[3]) << 8) + ord(word[4])
-                        
+
                         # Send an ACK after enough bytes have been received
                         unackedByteCount += len(word)
                         if unackedByteCount >= 250:
@@ -243,57 +233,12 @@ def program():
                             print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
                             ser.write(encode('ACK' + word[1] + word[2] + word[3] + word[4]))
                     else:
-                        if count % 3000 == 0:
-                            count += 1
-                    
-                        # TODO: Send LAST id, NOT fail to access current one
                         print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
                                       + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
                         ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
                                                 + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
             else:
                 word += c
-
-
-        # mote -> pc        (data with 2 byte sequence number)
-        # pc -ACK-> mote    (huge overhead)
-        # pc -NACK-> mote   (what if NACK is corrupted, how does mote know what to retransmit?)
-
-        # Every 10 packets are ACKed
-        # => when NACK is lost, mote needs to send at most 13kb again (too much or too little?)
-
-        # If packet arrived at pc that was not yet ACKed and no new packets come in for
-        # a certain amount of time (one second?) an ACK will be send to confirm the last packet.
-
-        # What if mote is not connected to pc? ACK is expected for 10th packet which never happens.
-        # Buffer overflow because packets are never removed from buffer.
-        # => Deal with overflow instead of ignoring it. What has to happen exactly when overflow occurs?
-
-        # Buffer is completely reset on overflow, all untransmitted packets will be lost.
-        # => Sniffer is no longer lossless when overflow occurs and mote has to be reset to turn of warning led
-
-        """
-        c = ser.read(1)
-        while c != '#':
-            c = ser.read(1)
-
-        word = ''
-        c = ser.read(1)
-        while c != '~':
-            word += c
-            c = ser.read(1)
-
-        print(word)
-        """
-
-
-        """
-        word = ''
-        for i in range(0, random.randint(1, 100)):
-            word += chr(random.randint(0, 255))
-
-        ser.write(encode(word))
-        """
 
 def main():
     try:
