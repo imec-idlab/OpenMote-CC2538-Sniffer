@@ -31,3 +31,13 @@ sudo make program-bsl
 ```
 sudo python serial-connect.py
 ```
+
+## Current modules
+- sniffer  
+    The actual sniffer program which is supposed to be lossless
+- debug-receiver  
+    Just show the received data in an unoptimized best-effort way
+- custom-TX  
+    Transmits packets with a sequence number one after the other
+- max-radio-performance  
+    Transmit packets as fast as possible by manually accessing radio and making various optimizations (max 1942 packets/sec)
