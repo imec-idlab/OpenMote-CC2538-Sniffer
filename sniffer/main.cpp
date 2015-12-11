@@ -23,7 +23,7 @@
 #define RADIO_RECEIVE_TASK_PRIORITY  ( tskIDLE_PRIORITY + 3 )
 #define SERIAL_SEND_TASK_PRIORITY    ( tskIDLE_PRIORITY + 1 )
 
-#define BUFFER_LEN  8000
+#define BUFFER_LEN  24000
 
 /*================================ typedef ==================================*/
 
