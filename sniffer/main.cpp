@@ -96,8 +96,9 @@ static uint16_t bufferIndexRadio = 0;
 static uint16_t bufferIndexSerialSend = 0;
 static uint16_t bufferIndexAcked = 0;
 
-static bool bufferIndexSerialSendRequiresUpdate = false;
-static uint16_t bufferIndexSerialSendUpdatedValue;
+static bool resetRequested = true;
+static bool bufferIndexSerialSendRequiresUpdate = true;
+static uint16_t bufferIndexSerialSendUpdatedValue = 0;
 
 static uint16_t seqNr = 0;
 
@@ -118,13 +119,16 @@ int main (void)
     // Enable the IEEE 802.15.4 radio
     radio.setRxCallbacks(&rxInitCallback, &rxDoneCallback);
     radio.enable();
-    radio.setChannel(13);
+    radio.setChannel(25);
     radio.enableInterrupts();
 
     // Enable the UART peripheral
     uart.enable(460800/*921600*//*2000000*/, UART_CONFIG, UART_INT_MODE);
     uart.setRxCallback(&serialReceiveCallback);
     uart.enableInterrupts();
+
+    // Enable the FIFO in the UART
+///    UARTFIFODisable(base_); //TODO: any influence?
 
     // Create the blink task
     xTaskCreate(prvGreenLedTask, (const char *) "Green", 128, NULL, GREEN_LED_TASK_PRIORITY, NULL);
@@ -162,14 +166,13 @@ static void serialSend(void)
 
         // Fill the transmit buffer
         if (buffer[bufferIndexSerialSend] <= 132)
-            fastHDLC(buffer[bufferIndexSerialSend]);
+            fastHDLC(buffer[bufferIndexSerialSend] - 1);
         else
         {
             led_orange.on();
             return;
         }
 
-        // Pass bytes to UART (TODO: Try to activate FIFO queue in UART to avoid blocking)
         for (uint16_t i = 0; i < uartBufferLen; ++i)
             UARTCharPut(uart.getBase(), uartBuffer[i]);
 
@@ -184,6 +187,7 @@ static void serialSend(void)
             bufferIndexSerialSend = bufferIndexAcked;
 
             // TODO: Check if we passed radio pointer when jumping back
+            // TODO: Why? Acked isn't moved
         }
         else
             led_yellow.off();
@@ -202,8 +206,27 @@ static void prvSerialSendTask(void *pvParameters)
         {
             bufferIndexSerialSendRequiresUpdate = false;
             bufferIndexSerialSend = bufferIndexSerialSendUpdatedValue;
+            bufferIndexAcked = bufferIndexSerialSend; // TODO: Why?
 
             // TODO: Check if we passed radio pointer when jumping back
+
+            // If a reset was requested, tell the pc that we are ready
+            if (resetRequested)
+            {
+                resetRequested = false;
+
+                UARTCharPut(uart.getBase(), '~');
+                UARTCharPut(uart.getBase(), 'R');
+                UARTCharPut(uart.getBase(), 'E');
+                UARTCharPut(uart.getBase(), 'A');
+                UARTCharPut(uart.getBase(), 'D');
+                UARTCharPut(uart.getBase(), 'Y');
+                UARTCharPut(uart.getBase(), 141);
+                UARTCharPut(uart.getBase(), 58);
+                UARTCharPut(uart.getBase(), '~');
+
+                seqNr = 0;
+            }
         }
 
         serialSend();
@@ -243,6 +266,10 @@ static void rxDone(void)
     }
     else // No packet lost, continue normally
     {
+        // Increment sequence number but skip the zero after using the highest number
+        if (++seqNr == 0)
+            seqNr = 1;
+
         // Check that there is still space behind the last packet
         if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
         {
@@ -264,18 +291,14 @@ static void rxDone(void)
 
         // Copy the RX buffer to the buffer (except for the CRC)
         for (uint8_t i = 0; i < packetLength; i++)
-            buffer[bufferIndexRadio+7+i] = HWREG(RFCORE_SFR_RFDATA);
+            buffer[bufferIndexRadio+5+i] = HWREG(RFCORE_SFR_RFDATA);
 
         // The next two bytes are the FCS replacement (2 byte CRC was replaced with 1 byte RSSI, 1 bit FCS Valid and 7 bit LQI)
-        buffer[bufferIndexRadio+5] = (int8_t(HWREG(RFCORE_SFR_RFDATA)) - CC2538_RF_RSSI_OFFSET);
-        buffer[bufferIndexRadio+6] = HWREG(RFCORE_SFR_RFDATA);
+        buffer[bufferIndexRadio+5+packetLength] = (int8_t(HWREG(RFCORE_SFR_RFDATA)) - CC2538_RF_RSSI_OFFSET);
+        buffer[bufferIndexRadio+6+packetLength] = HWREG(RFCORE_SFR_RFDATA);
 
         // Move the buffer index forward
         bufferIndexRadio += fullPacketLength;
-
-        // Increment sequence number but skip the zero after using the highest number
-        if (++seqNr == 0)
-            seqNr = 1;
     }
 
     radio.receive();
@@ -294,7 +317,14 @@ static void serialByteReceived(void)
         // Check if the frame is complete
         if (receivingStatus)
         {
-            // TODO: Out of sync detection (empty packet)
+            // Detect out of sync
+            if (receiveUartBufferIndex == 0)
+            {
+                escaping = false;
+                bufferIndexSerialSendUpdatedValue = bufferIndexAcked;
+                bufferIndexSerialSendRequiresUpdate = true;
+                return;
+            }
 
             // Something went wrong if we are still in escaping mode or if message is too short, resend everything since last ACK
             if (escaping || (receiveUartBufferIndex < 3))
@@ -370,6 +400,7 @@ static void serialByteReceived(void)
                         // Empty buffer and make next packet have sequence number 0
                         bufferIndexSerialSendUpdatedValue = bufferIndexRadio;
                         bufferIndexSerialSendRequiresUpdate = true;
+                        resetRequested = true;
                         seqNr = 0;
 
                         led_yellow.off();

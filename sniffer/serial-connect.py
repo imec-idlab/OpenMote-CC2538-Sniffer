@@ -106,7 +106,7 @@ def calcCRC(string):
         crc = lut[ord(c) ^ ((crc >> 8) & 0xFF)] ^ ((crc << 8) & 0xFFFF)
     return crc;
 
-def decode(msg):
+def decode(msg, quiet=False):
     escaped = False
     string = ''
     for c in msg:
@@ -121,14 +121,18 @@ def decode(msg):
                 string += c
 
     if len(string) < 7:
-        print("WARNING: Received string too short")
+        if not quiet:
+            print("WARNING: Received string too short")
         return ('', 0)
 
     if calcCRC(string[:-2]) != ((ord(string[-2]) << 8) + ord(string[-1])):
-        print("WARNING: CRC check failed!")
+        if not quiet:
+            print("WARNING: CRC check failed!")
         return ('', 0)
-        
+    
+    print(str(len(string)) + ' ' + string)
     return (string[:-2], (ord(string[-2]) << 8) + ord(string[-1]))
+
 
 def encode(string):
     crc = calcCRC(string)
@@ -157,10 +161,8 @@ def encode(string):
 
     return chr(HDLC_FLAG) + str(byteArray) + chr(HDLC_FLAG)
 
-def program():
-    #os.system("make TARGET=cc2538 BOARD=openmote-cc2538 all")
-    #os.system("make TARGET=cc2538 BOARD=openmote-cc2538 bsl")
 
+def program():
     ser = serial.Serial(port     = '/dev/ttyUSB0',
                         baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
                         parity   = serial.PARITY_NONE,
@@ -168,95 +170,139 @@ def program():
                         bytesize = serial.EIGHTBITS,
                         xonxoff  = False,
                         rtscts   = False,
-                        dsrdtr   = False)
+                        dsrdtr   = False,
+                        timeout   = 0.25)
 
-    ser.setRTS(False) # Disable bootloader
-    ser.setDTR(False) # Disable reboot
-
-    print("Listener started")
-    
-    ser.write(encode('RST'))
-    
-    # TODO: Listen without reporting errors or sending NACKS until the first packet is received
-    
-    count=0
-    unackedByteCount=0
+    word = ''
+    count = 0
+    unackedByteCount = 0
     lastIndex = 0
-    lastSeqNr = 0
-    first=True
+    lastSeqNr = -1
+    expectedSeqNr = 1
     receiving = False
     faultyPacketIgnored = False
+
+    # Keep sending RST packet and discard all bytes until the READY packet arrives
+    while lastSeqNr == -1:
+        print('Connecting...')
+        ser.write(encode('RST'))
+        begin = time.time()
+        while time.time() - begin < 1:
+            c = ser.read(1)
+            if len(c) > 0:
+                if not receiving:
+                    if c == chr(HDLC_FLAG):
+                        receiving = True
+                        word = ''
+                else:
+                    if c == chr(HDLC_FLAG):
+                        if len(word) != 0:
+                            receiving = False
+                            word = decode(word, quiet=True)[0]
+                            if len(word) > 0:
+                                if word == 'READY':
+                                    lastSeqNr = 0
+                                    expectedSeqNr = 1
+                                    break
+                    else:
+                        word += c
+
+    print('Connected to sniffer')
 
     pkts = 0
     begin = time.time()
     while(True):
         c = ser.read(1)
-        if not receiving:
-            if c == chr(HDLC_FLAG):
-                receiving = True
-                word = ''
-                if first == True:
-                    print('RECEIVING')
-                first=False
-            else:
-                print('WARNING: byte dropped')
-        else:
-            if c == chr(HDLC_FLAG):
-                if len(word) == 0:
-                    print('WARNING: out of sync detected')
+        if len(c) > 0:
+            if not receiving:
+                if c == chr(HDLC_FLAG):
+                    receiving = True
+                    word = ''
                 else:
-                    receiving = False
-                    word = decode(word)[0]
-                    if len(word) > 0:
-                        pkts += 1
-                        if time.time() - begin > 1:
-                            #print(pkts)
-                            pkts = 0
-                            begin = time.time()
-
-                        #print(str(len(word)) + ' ' + word)
-                        count = (count+1) % 4294967296
-                        receivedCount = (ord(word[7]) << 24) + (ord(word[8]) << 16) + (ord(word[9]) << 8) + ord(word[10])
-                        print(str((ord(word[3]) << 8) + ord(word[4])) + ' ' + str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
-
-                        """
-                        if count != receivedCount:
-                            # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
-                            if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
-                                print("ERROR: Packet lost!")
-                                quit()
-                            else:
-                                faultyPacketIgnored = True
-                                print("WARNING: faulty packet assumed")
-                        else:
-                            faultyPacketIgnored = False
-                            #ser.write(encode('ACK' + word[1] + word[2]))
-                            #tun_interface.inject(word)
-                        """
-
-                        # Remember the index and sequence number of this packet in case the next one is corrupted
-                        lastIndex = (ord(word[1]) << 8) + ord(word[2])
-                        lastSeqNr = (ord(word[3]) << 8) + ord(word[4])
-
-                        # Send an ACK after enough bytes have been received
-                        unackedByteCount += len(word)
-                        if unackedByteCount >= 250:
-                            unackedByteCount = 0
-                            #print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
-                            ser.write(encode('ACK' + word[1] + word[2] + word[3] + word[4]))
-                    else:
-                        print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                                      + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                        ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
-                                                + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                    print('WARNING: byte dropped')
             else:
-                word += c
+                if c == chr(HDLC_FLAG):
+                    if len(word) == 0:
+                        print('WARNING: out of sync detected')
+                    else:
+                        receiving = False
+                        word = decode(word)[0]
+                        if len(word) > 0:
+                            if word == 'READY':
+                                print('Sniffer reset detected, restarting')
+                                return True
+
+                            pkts += 1
+                            if time.time() - begin > 1:
+                                #print(pkts)
+                                pkts = 0
+                                begin = time.time()
+
+                            # Ignore the packet if it had a wrong sequence number
+                            if expectedSeqNr == (ord(word[3]) << 8) + ord(word[4]):
+                                expectedSeqNr += 1
+                                if expectedSeqNr == 65536:
+                                    expectedSeqNr = 1
+
+                                count = (count+1) % 4294967296
+                                receivedCount = (ord(word[5]) << 24) + (ord(word[6]) << 16) + (ord(word[7]) << 8) + ord(word[8])
+                                print(str((ord(word[3]) << 8) + ord(word[4])) + ' ' + str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
+                                if count != receivedCount:
+                                    # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
+                                    if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
+                                        print("ERROR: Packet lost!")
+                                        quit()
+                                    else:
+                                        faultyPacketIgnored = True
+                                        print("WARNING: faulty packet assumed: " + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
+                                else:
+                                    faultyPacketIgnored = False
+                                    #ser.write(encode('ACK' + word[1] + word[2]))
+                                    #tun_interface.inject(word)
+
+                                # Remember the index and sequence number of this packet in case the next one is corrupted
+                                lastIndex = (ord(word[1]) << 8) + ord(word[2])
+                                lastSeqNr = (ord(word[3]) << 8) + ord(word[4])
+
+                                # Send an ACK after enough bytes have been received
+                                unackedByteCount += len(word)
+                                if unackedByteCount >= 250:
+                                    unackedByteCount = 0
+                                    #print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
+                                    ser.write(encode('ACK' + word[1] + word[2] + word[3] + word[4]))
+                            else:
+                                print('WARNING: Received packet with seqNr=' + str((ord(word[3]) << 8) + ord(word[4]))
+                                      + ' while expecting packet with seqNr=' + str(expectedSeqNr))
+                        else:
+                            print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
+                                          + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
+                            ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                                    + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                else: # Not the closing byte
+                    word += c
+
+        else: # No character was read
+            if receiving:
+                receiving = False
+                print('WARNING: expected another byte, assuming out of sync')
+                print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
+                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
+                ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                        + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+
+    # The program has ended and does not require a restart
+    return False
 
 def main():
     try:
         random.seed()
+
         #tun_interface.start()
-        program()
+
+        # When the program notices a reset from the OpenMote, it can restart itself
+        while program():
+            pass
+
         #tun_interface.stop()
     except (KeyboardInterrupt):
         #tun_interface.stop()
