@@ -23,7 +23,7 @@ static PlainCallback txDoneCallback(&txDone);
 
 static xSemaphoreHandle txSemaphore;
 
-static uint8_t radio_buffer[124];
+static uint8_t radio_buffer[125];
 
 /*================================= public ==================================*/
 
@@ -37,6 +37,7 @@ int main (void)
         radio_buffer[52+i] = '0' + i;
     for (unsigned int i = 0; i < 62; ++i)
         radio_buffer[62+i] = radio_buffer[i];
+    radio_buffer[124] = '!';
 
     // Enable erasing the Flash with the user button
     board.enableFlashErase();
@@ -47,7 +48,7 @@ int main (void)
     radio.setTxCallbacks(&txInitCallback, &txDoneCallback);
     radio.enable();
     radio.enableInterrupts();
-    radio.setChannel(26);
+    radio.setChannel(25);
 
     // Enable interrupts
     board.enableInterrupts();
