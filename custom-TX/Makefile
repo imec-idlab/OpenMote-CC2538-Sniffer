@@ -25,9 +25,3 @@ BOARD  = openmote-cc2538
 
 # Include the Makefile in the root directory
 include $(PROJECT_HOME)/Makefile.include
-
-# Hardcode the bsl command because the openmote-bsl script assumes you are inside one of the firmware subfolders
-program-bsl:
-	@cd ../OpenMoteFirmware/tools/openmote-bsl; \
-	echo "Loading $(PROJECT_NAME) into target..."; \
-	python openmote-bsl.py ../../../$(PROJECT_NAME)/$(PROJECT_NAME).hex --board openbase
