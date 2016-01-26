@@ -25,6 +25,11 @@
 
 #define BUFFER_LEN  8000
 
+#define CC2538_RF_MIN_PACKET_LEN   ( 3 )
+#define CC2538_RF_MAX_PACKET_LEN   ( 127 )
+#define CC2538_RF_RSSI_OFFSET      ( 73 )
+
+
 /*================================ typedef ==================================*/
 
 /*=============================== prototypes ================================*/
@@ -37,7 +42,6 @@ static void rxDone(void);
 static void serialByteReceived(void);
 
 static void fastHDLC(uint8_t dataLength);
-static void reset(void);
 
 /*=============================== variables =================================*/
 
@@ -80,9 +84,9 @@ static PlainCallback rxInitCallback(&rxInit);
 static PlainCallback rxDoneCallback(&rxDone);
 static PlainCallback serialReceiveCallback(&serialByteReceived);
 
-// TODO: Recheck uartBuffer size
+// TODO: Remove debug byte
 static uint16_t uartBufferLen = 0;
-static uint8_t uartBuffer[((132+2)*2)+2]; // data+crc (2x for when each character is escaped) plus begin and end character
+static uint8_t uartBuffer[((129+2+1)*2)+2]; // data+crc+DEBUG_BYTE (2x for when each character is escaped) plus begin and end character
 
 static uint8_t receiveUartBuffer[16];
 static uint8_t receiveUartBufferIndex = 0;
@@ -94,6 +98,8 @@ static uint16_t bufferIndexAcked = 0;
 
 static bool bufferIndexSerialSendRequiresUpdate = false;
 static uint16_t bufferIndexSerialSendUpdatedValue;
+
+static uint16_t seqNr = 0;
 
 /*================================= public ==================================*/
 
@@ -112,7 +118,7 @@ int main (void)
     // Enable the IEEE 802.15.4 radio
     radio.setRxCallbacks(&rxInitCallback, &rxDoneCallback);
     radio.enable();
-    radio.setChannel(26);
+    radio.setChannel(13);
     radio.enableInterrupts();
 
     // Enable the UART peripheral
@@ -155,7 +161,13 @@ static void serialSend(void)
             bufferIndexSerialSend = 0;
 
         // Fill the transmit buffer
-        fastHDLC(buffer[bufferIndexSerialSend]);
+        if (buffer[bufferIndexSerialSend] <= 132)
+            fastHDLC(buffer[bufferIndexSerialSend]);
+        else
+        {
+            led_orange.on();
+            return;
+        }
 
         // Pass bytes to UART (TODO: Try to activate FIFO queue in UART to avoid blocking)
         for (uint16_t i = 0; i < uartBufferLen; ++i)
@@ -165,12 +177,16 @@ static void serialSend(void)
         bufferIndexSerialSend += buffer[bufferIndexSerialSend];
 
         // When we didn't receive an ACK for some time we must resend packets
-        if (((bufferIndexSerialSend > bufferIndexAcked) && (bufferIndexSerialSend - bufferIndexAcked >= 1000))
-         || ((bufferIndexSerialSend < bufferIndexAcked) && (BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend >= 800)))
+        if (((bufferIndexSerialSend > bufferIndexAcked) && (bufferIndexSerialSend - bufferIndexAcked >= 750))
+         || ((bufferIndexSerialSend < bufferIndexAcked) && (BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend >= 750)))
         {
             led_yellow.on();
             bufferIndexSerialSend = bufferIndexAcked;
+
+            // TODO: Check if we passed radio pointer when jumping back
         }
+        else
+            led_yellow.off();
     }
 }
 
@@ -186,6 +202,8 @@ static void prvSerialSendTask(void *pvParameters)
         {
             bufferIndexSerialSendRequiresUpdate = false;
             bufferIndexSerialSend = bufferIndexSerialSendUpdatedValue;
+
+            // TODO: Check if we passed radio pointer when jumping back
         }
 
         serialSend();
@@ -203,83 +221,74 @@ static void rxDone(void)
     // Turn off the radio LED as the packet is now received
     led_red.off();
 
-    static RadioResult result;
-    static uint8_t radio_buffer[125];
-    static uint8_t radio_len = sizeof(radio_buffer);
-    static int8_t rssi;
-    static uint8_t lqi;
-    static uint8_t crc;
-    static uint16_t seqNr = 0;
-
-    // Get a packet from the radio buffer
-    radio_len = sizeof(radio_buffer);
-    result = radio.getPacket(radio_buffer, &radio_len, &rssi, &lqi, &crc);
-    //result = radio.getRawPacket(radio_buffer, &radio_len);
-    if (result == RadioResult_Success)
+    // Check the packet length (first byte)
+    uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
+    if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
     {
+        radio.receive();
+        return;
+    }
+
+    uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
+
+    // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
+    if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+      && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked < fullPacketLength)))
+     || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
+      && (bufferIndexAcked > bufferIndexRadio)
+      && (bufferIndexAcked < bufferIndexRadio + fullPacketLength)))
+    {
+        // Indicate that we are no longer lossless and discard this packet
+        led_orange.on();
+    }
+    else // No packet lost, continue normally
+    {
+        // Check that there is still space behind the last packet
+        if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+        {
+            // Mark that the last part of the buffer as unused and start at the beginning
+            buffer[bufferIndexRadio] = 0xff;
+            bufferIndexRadio = 0;
+        }
+
+        // Put the amount of bytes that we will use (including this length byte) in the buffer
+        buffer[bufferIndexRadio] = fullPacketLength;
+
+        // The first two bytes are the index in the buffer right after this packet
+        buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
+        buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
+
+        // The next two bytes form the sequence number (for verifying if correct packet is still in buffer)
+        buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
+        buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+
+        // Copy the RX buffer to the buffer (except for the CRC)
+        for (uint8_t i = 0; i < packetLength; i++)
+            buffer[bufferIndexRadio+7+i] = HWREG(RFCORE_SFR_RFDATA);
+
+        // The next two bytes are the FCS replacement (2 byte CRC was replaced with 1 byte RSSI, 1 bit FCS Valid and 7 bit LQI)
+        buffer[bufferIndexRadio+5] = (int8_t(HWREG(RFCORE_SFR_RFDATA)) - CC2538_RF_RSSI_OFFSET);
+        buffer[bufferIndexRadio+6] = HWREG(RFCORE_SFR_RFDATA);
+
+        // Move the buffer index forward
+        bufferIndexRadio += fullPacketLength;
+
         // Increment sequence number but skip the zero after using the highest number
         if (++seqNr == 0)
             seqNr = 1;
-
-        uint8_t fullPacketLength = radio_len + 8; // Packet size plus extra bytes that we add to it plus this byte
-
-        // The index must never pass the ack index, otherwise we MAY lose a packet when a NACK comes in
-        if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-          && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked < fullPacketLength)))
-         || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
-          && (bufferIndexAcked > bufferIndexRadio)
-          && (bufferIndexAcked < bufferIndexRadio + fullPacketLength)))
-        {
-            reset();
-            led_orange.on();
-        }
-        else // No packet lost, continue normally
-        {
-            // Check that there is still space behind the last packet
-            if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-            {
-                // Mark that the last part of the buffer as unused and start at the beginning
-                buffer[bufferIndexRadio] = 0xff;
-                bufferIndexRadio = 0;
-            }
-
-            // Put the amount of bytes that we will use (including this length byte) in the buffer
-            buffer[bufferIndexRadio] = fullPacketLength;
-
-            // The first two bytes are the index in the buffer right after this packet
-            buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
-            buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
-
-            // The next two bytes form the sequence number (for verifying if correct packet is still in buffer)
-            buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
-            buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
-
-            // The next three bytes are RSSI, LQI and CRC
-            buffer[bufferIndexRadio+5] = rssi;
-            buffer[bufferIndexRadio+6] = lqi;
-            buffer[bufferIndexRadio+7] = crc;
-
-            // Everything after that is the actual packet
-            memcpy(&buffer[bufferIndexRadio+8], radio_buffer, radio_len);
-
-            // Move the buffer index forward
-            bufferIndexRadio += fullPacketLength;
-        }
     }
 
-    // We are ready to receive the next packet
     radio.receive();
 }
 
 static void serialByteReceived(void)
 {
-    static uint16_t crc;
+    static uint16_t crc = 0xffff;
     static bool receivingStatus = false;
     static bool escaping = false;
 
     // Read byte from the UART
     uint8_t byte = uart.readByte();
-
     if (byte == HDLC_FLAG)
     {
         // Check if the frame is complete
@@ -287,13 +296,15 @@ static void serialByteReceived(void)
         {
             // TODO: Out of sync detection (empty packet)
 
-            // Something went wrong if we are still in escaping mode or if the message is too short
+            // Something went wrong if we are still in escaping mode or if message is too short, resend everything since last ACK
             if (escaping || (receiveUartBufferIndex < 3))
             {
                 receivingStatus = false;
                 escaping = false;
                 receiveUartBufferIndex = 0;
-                led_yellow.on();
+                bufferIndexSerialSendUpdatedValue = bufferIndexAcked;
+                bufferIndexSerialSendRequiresUpdate = true;
+                return;
             }
 
             // Handle the received packet
@@ -316,10 +327,11 @@ static void serialByteReceived(void)
                             // Move the acked index forward
                             bufferIndexAcked = ((buffer[index+1] << 8) + buffer[index+2]) + buffer[index];
                         }
-                        else // We were not fast enough
+                        else // This should not be possible, drop buffer
                         {
-                            reset();
                             led_orange.on();
+                            bufferIndexSerialSendUpdatedValue = bufferIndexRadio;
+                            bufferIndexSerialSendRequiresUpdate = true;
                         }
                     }
                     else if ((receiveUartBufferIndex == 8)
@@ -343,10 +355,11 @@ static void serialByteReceived(void)
                             bufferIndexSerialSendUpdatedValue = bufferIndexAcked;
                             bufferIndexSerialSendRequiresUpdate = true;
                         }
-                        else // We were not fast enough
+                        else // This should not be possible, drop buffer
                         {
-                            reset();
                             led_orange.on();
+                            bufferIndexSerialSendUpdatedValue = bufferIndexRadio;
+                            bufferIndexSerialSendRequiresUpdate = true;
                         }
                     }
                     else if ((receiveUartBufferIndex == 3)
@@ -354,7 +367,13 @@ static void serialByteReceived(void)
                      && (receiveUartBuffer[1] = 'S')
                      && (receiveUartBuffer[2] = 'T'))
                     {
-                        reset();
+                        // Empty buffer and make next packet have sequence number 0
+                        bufferIndexSerialSendUpdatedValue = bufferIndexRadio;
+                        bufferIndexSerialSendRequiresUpdate = true;
+                        seqNr = 0;
+
+                        led_yellow.off();
+                        led_orange.off();
                     }
                     else // Invalid packet received, resend everything up to the last received ACK
                     {
@@ -387,7 +406,10 @@ static void serialByteReceived(void)
         receivingStatus = false;
         escaping = false;
         receiveUartBufferIndex = 0;
-        led_yellow.on();
+        
+        bufferIndexSerialSendUpdatedValue = bufferIndexAcked;
+        bufferIndexSerialSendRequiresUpdate = true;
+        return;
     }
 
     // TODO: If we pass here with receivingStatus is false then something is wrong -> handle this case
@@ -413,17 +435,14 @@ static void serialByteReceived(void)
 
 static void fastHDLC(uint8_t dataLength)
 {
-    // The size can not exceed 130 (125 of packet + 3 bytes with extra data + 2 bytes sequence number)
-    ASSERT(dataLength <= 130);
-
     // TODO: Remove debugInfo byte
     uint8_t byte;
-    uartBufferLen = 2; // Start HDLC_FLAG is already there
+    uartBufferLen = 2; // Start HDLC_FLAG is already there + 1 DEBUG_INFO BYTE
     uint8_t debugInfo = 0;
     if (bufferIndexAcked > bufferIndexRadio)
-        debugInfo = (BUFFER_LEN - (bufferIndexAcked - bufferIndexRadio)) / 25;
+        debugInfo = (BUFFER_LEN - (bufferIndexAcked - bufferIndexRadio)) / 50;
     else
-        debugInfo = (bufferIndexRadio - bufferIndexAcked) / 25;
+        debugInfo = (bufferIndexRadio - bufferIndexAcked) / 50;
 
     if (debugInfo == HDLC_FLAG || debugInfo == HDLC_ESCAPE)
     {
@@ -478,25 +497,4 @@ static void fastHDLC(uint8_t dataLength)
 
     // Add the ending HDLC_FLAG byte
     uartBuffer[uartBufferLen++] = HDLC_FLAG;
-}
-
-static void reset(void)
-{
-    radio.disableInterrupts();
-    uart.disableInterrupts();
-
-    led_yellow.off();
-    led_orange.off();
-    led_green.off();
-
-    // Reset the entire buffer and start over
-    for (uint32_t i = 0; i < BUFFER_LEN; ++i)
-        buffer[i] = 0;
-
-    bufferIndexRadio = 0;
-    bufferIndexSerialSend = 0;
-    bufferIndexAcked = 0;
-
-    radio.enableInterrupts();
-    uart.enableInterrupts();
 }

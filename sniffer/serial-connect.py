@@ -6,6 +6,7 @@ import os
 import random
 import fcntl
 import subprocess
+import time
 
 class TunInterface():
     TUNSETIFF   = 0x400454ca
@@ -186,6 +187,8 @@ def program():
     receiving = False
     faultyPacketIgnored = False
 
+    pkts = 0
+    begin = time.time()
     while(True):
         c = ser.read(1)
         if not receiving:
@@ -205,10 +208,18 @@ def program():
                     receiving = False
                     word = decode(word)[0]
                     if len(word) > 0:
-                        count = (count+1) % 4294967296
-                        receivedCount = (ord(word[8]) << 24) + (ord(word[9]) << 16) + (ord(word[10]) << 8) + ord(word[11])
-                        print(str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
+                        pkts += 1
+                        if time.time() - begin > 1:
+                            #print(pkts)
+                            pkts = 0
+                            begin = time.time()
 
+                        #print(str(len(word)) + ' ' + word)
+                        count = (count+1) % 4294967296
+                        receivedCount = (ord(word[7]) << 24) + (ord(word[8]) << 16) + (ord(word[9]) << 8) + ord(word[10])
+                        print(str((ord(word[3]) << 8) + ord(word[4])) + ' ' + str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
+
+                        """
                         if count != receivedCount:
                             # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                             if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
@@ -221,6 +232,7 @@ def program():
                             faultyPacketIgnored = False
                             #ser.write(encode('ACK' + word[1] + word[2]))
                             #tun_interface.inject(word)
+                        """
 
                         # Remember the index and sequence number of this packet in case the next one is corrupted
                         lastIndex = (ord(word[1]) << 8) + ord(word[2])
@@ -230,7 +242,7 @@ def program():
                         unackedByteCount += len(word)
                         if unackedByteCount >= 250:
                             unackedByteCount = 0
-                            print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
+                            #print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
                             ser.write(encode('ACK' + word[1] + word[2] + word[3] + word[4]))
                     else:
                         print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
