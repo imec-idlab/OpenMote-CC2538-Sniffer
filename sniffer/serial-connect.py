@@ -129,8 +129,7 @@ def decode(msg, quiet=False):
         if not quiet:
             print("WARNING: CRC check failed!")
         return ('', 0)
-    
-    print(str(len(string)) + ' ' + string)
+
     return (string[:-2], (ord(string[-2]) << 8) + ord(string[-1]))
 
 
@@ -263,16 +262,17 @@ def program():
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[1]) << 8) + ord(word[2])
                                 lastSeqNr = (ord(word[3]) << 8) + ord(word[4])
-
-                                # Send an ACK after enough bytes have been received
-                                unackedByteCount += len(word)
-                                if unackedByteCount >= 250:
-                                    unackedByteCount = 0
-                                    #print('ACK ' + str(ord(word[1])) + ' ' + str(ord(word[2])) + ' ' + str(ord(word[3])) + ' ' + str(ord(word[4])))
-                                    ser.write(encode('ACK' + word[1] + word[2] + word[3] + word[4]))
                             else:
                                 print('WARNING: Received packet with seqNr=' + str((ord(word[3]) << 8) + ord(word[4]))
                                       + ' while expecting packet with seqNr=' + str(expectedSeqNr))
+
+                            # Send an ACK after enough bytes have been received
+                            unackedByteCount += len(word)
+                            if unackedByteCount >= 250 and lastSeqNr != 0:
+                                unackedByteCount = 0
+                                ser.write(encode('ACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                                       + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+
                         else:
                             print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
                                           + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))

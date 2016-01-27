@@ -34,8 +34,7 @@
 
 /*=============================== prototypes ================================*/
 
-static void prvGreenLedTask(void *pvParameters);
-static void prvSerialSendTask(void *pvParameters);
+static void prvSerialTask(void *pvParameters);
 
 static void rxInit(void);
 static void rxDone(void);
@@ -130,32 +129,19 @@ int main (void)
     // Enable the FIFO in the UART
 ///    UARTFIFODisable(base_); //TODO: any influence?
 
-    // Create the blink task
-    xTaskCreate(prvGreenLedTask, (const char *) "Green", 128, NULL, GREEN_LED_TASK_PRIORITY, NULL);
-    xTaskCreate(prvSerialSendTask, (const char *) "SerialSend", 128, NULL, SERIAL_SEND_TASK_PRIORITY, NULL);
+    // Create the sole task which will be executed infinitely
+    xTaskCreate(prvSerialTask, (const char *) "Serial", 128, NULL, SERIAL_SEND_TASK_PRIORITY, NULL);
 
     radio.on();
     radio.receive();
 
-    // Kick the FreeRTOS scheduler
-    vTaskStartScheduler();
+    // Setup interrupts and call our serial task
+    led_green.on();
+    portDISABLE_INTERRUPTS();
+    xPortStartScheduler();
 }
 
 /*================================ private ==================================*/
-
-static void prvGreenLedTask(void *pvParameters)
-{
-    while (true)
-    {
-        // Turn off the green LED and keep it for 950 ms
-        led_green.off();
-        vTaskDelay(950 / portTICK_RATE_MS);
-
-        // Turn on the green LED and keep it for 50 ms
-        led_green.on();
-        vTaskDelay(50 / portTICK_RATE_MS);
-    }
-}
 
 static void serialSend(void)
 {
@@ -194,7 +180,7 @@ static void serialSend(void)
     }
 }
 
-static void prvSerialSendTask(void *pvParameters)
+static void prvSerialTask(void *pvParameters)
 {
     // The first byte in the transmit buffer is always the HDLC_FLAG
     uartBuffer[0] = HDLC_FLAG;
