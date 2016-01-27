@@ -181,10 +181,10 @@ def program():
     receiving = False
     faultyPacketIgnored = False
 
-    # Keep sending RST packet and discard all bytes until the READY packet arrives
+    # Keep sending RESET packet and discard all bytes until the READY packet arrives
     while lastSeqNr == -1:
         print('Connecting...')
-        ser.write(encode('RST'))
+        ser.write(encode('RESET'))
         begin = time.time()
         while time.time() - begin < 1:
             c = ser.read(1)
@@ -238,14 +238,14 @@ def program():
                                 begin = time.time()
 
                             # Ignore the packet if it had a wrong sequence number
-                            if expectedSeqNr == (ord(word[3]) << 8) + ord(word[4]):
+                            if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
                                 expectedSeqNr += 1
                                 if expectedSeqNr == 65536:
                                     expectedSeqNr = 1
 
                                 count = (count+1) % 4294967296
-                                receivedCount = (ord(word[5]) << 24) + (ord(word[6]) << 16) + (ord(word[7]) << 8) + ord(word[8])
-                                print(str((ord(word[3]) << 8) + ord(word[4])) + ' ' + str(count) + ' ' + str(ord(word[0])) + ' ' + str(receivedCount))
+                                receivedCount = (ord(word[4]) << 24) + (ord(word[5]) << 16) + (ord(word[6]) << 8) + ord(word[7])
+                                print(str(count) + ' ' + str(receivedCount))
                                 if count != receivedCount:
                                     # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                                     if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
@@ -256,14 +256,14 @@ def program():
                                         print("WARNING: faulty packet assumed: " + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
                                 else:
                                     faultyPacketIgnored = False
-                                    #ser.write(encode('ACK' + word[1] + word[2]))
+                                    #ser.write(encode('ACK' + word[0] + word[1]))
                                     #tun_interface.inject(word)
 
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
-                                lastIndex = (ord(word[1]) << 8) + ord(word[2])
-                                lastSeqNr = (ord(word[3]) << 8) + ord(word[4])
+                                lastIndex = (ord(word[0]) << 8) + ord(word[1])
+                                lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
                             else:
-                                print('WARNING: Received packet with seqNr=' + str((ord(word[3]) << 8) + ord(word[4]))
+                                print('WARNING: Received packet with seqNr=' + str((ord(word[2]) << 8) + ord(word[3]))
                                       + ' while expecting packet with seqNr=' + str(expectedSeqNr))
 
                             # Send an ACK after enough bytes have been received
