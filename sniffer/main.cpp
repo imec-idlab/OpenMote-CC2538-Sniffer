@@ -450,10 +450,10 @@ static void radioRxDone()
 
     // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
     if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-      && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked < fullPacketLength)))
+      && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
      || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
       && (bufferIndexAcked > bufferIndexRadio)
-      && (bufferIndexAcked < bufferIndexRadio + fullPacketLength)))
+      && (bufferIndexAcked <= bufferIndexRadio + fullPacketLength)))
     {
         // Indicate that we are no longer lossless and discard this packet
         led_orange.on();
