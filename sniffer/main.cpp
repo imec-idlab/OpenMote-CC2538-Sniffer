@@ -21,7 +21,7 @@
 #define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
 #define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
 
-#define BUFFER_LEN              10000
+#define BUFFER_LEN              9000
 #define UART_RX_BUFFER_LEN      128
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////

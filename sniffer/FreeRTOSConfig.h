@@ -13,7 +13,7 @@
 #define configUSE_TICK_HOOK                     0
 #define configMAX_PRIORITIES                    ( 5 )
 #define configMINIMAL_STACK_SIZE                ( ( unsigned short ) 64 )
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 1024 ) )
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 2048 ) )
 #define configMAX_TASK_NAME_LEN                 ( 16 )
 #define configUSE_TRACE_FACILITY                0
 #define configUSE_16_BIT_TICKS                  0

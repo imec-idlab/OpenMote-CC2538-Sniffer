@@ -174,6 +174,7 @@ def program():
 
     word = ''
     count = 0
+    totalCount = 0
     unackedByteCount = 0
     lastIndex = 0
     lastSeqNr = -1
@@ -233,7 +234,7 @@ def program():
 
                             pkts += 1
                             if time.time() - begin > 1:
-                                #print(pkts)
+                                print(pkts)
                                 pkts = 0
                                 begin = time.time()
 
@@ -243,9 +244,13 @@ def program():
                                 if expectedSeqNr == 65536:
                                     expectedSeqNr = 1
 
-                                count = (count+1) % 4294967296
-                                receivedCount = (ord(word[4]) << 24) + (ord(word[5]) << 16) + (ord(word[6]) << 8) + ord(word[7])
-                                print(str(count) + ' ' + str(receivedCount))
+                                totalCount += 1
+                                count += 1
+                                if count == 25000:
+                                    count = 1
+
+                                receivedCount = (ord(word[4]) << 8) + ord(word[5])
+                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)) + ' ' + word)
                                 if count != receivedCount:
                                     # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                                     if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
