@@ -121,7 +121,7 @@ static void prvRadioSendTask(void *pvParameters)
         radio_buffer[1] = count & 0xff;
 
         packetLen = rnd();
-        if (count == 2)
+        if (count % 2)
             packetLen = 2;
         else
             packetLen = 125;
