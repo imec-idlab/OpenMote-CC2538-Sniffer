@@ -136,9 +136,7 @@ int main()
     IntPrioritySet(INT_RFCORERTX, (7 << 5));
     IntEnable(INT_RFCORERTX);
 
-    // Turn on the radio in infinite RX FIFO looping mode (FRMFILT0[3:2] = 10)
-    HWREG(RFCORE_XREG_FRMCTRL0) &= ~0x4;
-    HWREG(RFCORE_XREG_FRMCTRL0) |= 0x8;
+    // Turn on the radio in receive mode
     CC2538_RF_CSP_ISFLUSHRX();
     CC2538_RF_CSP_ISRXON();
     led_green.on();
@@ -390,8 +388,8 @@ static void serialSend()
     bufferIndexSerialSend += buffer[bufferIndexSerialSend];
 
     // When we didn't receive an ACK for some time we must resend packets
-    if (((bufferIndexSerialSend > bufferIndexAcked) && (bufferIndexSerialSend - bufferIndexAcked >= 750))
-     || ((bufferIndexSerialSend < bufferIndexAcked) && (BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend >= 750)))
+    if (((bufferIndexSerialSend > bufferIndexAcked) && (bufferIndexSerialSend - bufferIndexAcked >= 1000))
+     || ((bufferIndexSerialSend < bufferIndexAcked) && (BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend >= 1000)))
     {
         led_yellow.on();
         bufferIndexSerialSend = bufferIndexAcked;
@@ -480,6 +478,9 @@ static void radioByteReceived()
         if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
         {
             validPacket = false; // TODO: What to do with such packets?
+
+            CC2538_RF_CSP_ISFLUSHRX();
+            CC2538_RF_CSP_ISRXON();
             return;
         }
 
@@ -495,6 +496,9 @@ static void radioByteReceived()
             // Indicate that we are no longer lossless and discard this packet
             led_orange.on();
             validPacket = false;
+
+            CC2538_RF_CSP_ISFLUSHRX();
+            CC2538_RF_CSP_ISRXON();
         }
         else // No packet lost, continue normally
         {
@@ -506,49 +510,45 @@ static void radioByteReceived()
                 bufferIndexRadio = 0;
             }
 
+            // Increment sequence number but skip the zero after using the highest number
+            if (++seqNr == 0)
+                seqNr = 1;
+
+            // Put the amount of bytes that we will use (including this length byte) in the buffer
+            buffer[bufferIndexRadio] = fullPacketLength;
+
+            // The first two bytes are the index in the buffer right after this packet
+            buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
+
+            buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
+
+            // The next two bytes form the sequence number
+            buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
+            buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+
             validPacket = true;
         }
     }
-    else if (irq_status0 == RFCORE_SFR_RFIRQF0_FIFOP)
+    else if ((irq_status0 & RFCORE_SFR_RFIRQF0_FIFOP) == RFCORE_SFR_RFIRQF0_FIFOP)
     {
         if (receiving && validPacket)
         {
-            if (bytesReceived == packetLength)
-            {
-                // TODO: More bytes in frame than header stated. What to do in this case (extra bytes are hard to add)?
-                validPacket = false;
-                return;
-            }
-
+            /// TODO Can buffer overflow here because packet is longer than expected, does RXPKTDONE still arrive in time then?
             // Put the read byte in the buffer
             buffer[bufferIndexRadio+5+bytesReceived] = HWREG(RFCORE_SFR_RFDATA);
+            ++bytesReceived;
 
-            // Fill in the rest of the buffer when this was the last byte
-            if (++bytesReceived == packetLength)
+            // Check if this was the last byte
+            if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) ==  RFCORE_SFR_RFIRQF0_RXPKTDONE)
             {
-                uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
-
-                // Increment sequence number but skip the zero after using the highest number
-                if (++seqNr == 0)
-                    seqNr = 1;
-
-                // Put the amount of bytes that we will use (including this length byte) in the buffer
-                buffer[bufferIndexRadio] = fullPacketLength;
-
-                // The first two bytes are the index in the buffer right after this packet
-                buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
-                buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
-
-                // The next two bytes form the sequence number
-                buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
-                buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+                // Ready for next packet
+                CC2538_RF_CSP_ISRXON();
+                receiving = false;
+                led_red.on();
 
                 // Move the buffer index forward
-                bufferIndexRadio += fullPacketLength;
-
-                // Ready for next packet
-                receiving = false;
-                CC2538_RF_CSP_ISRXON();
+                if (receiving && validPacket)
+                    bufferIndexRadio += packetLength + 5;
             }
         }
     }
