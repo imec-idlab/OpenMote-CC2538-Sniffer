@@ -2,7 +2,10 @@
 #include "Radio.h"
 #include "Uart.h"
 #include "uart.h"
+#include "hw_ints.h"
 #include "hw_rfcore_sfr.h"
+#include "hw_rfcore_xreg.h"
+#include "interrupt.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -17,6 +20,16 @@
 #define CC2538_RF_MIN_PACKET_LEN   ( 3 )
 #define CC2538_RF_MAX_PACKET_LEN   ( 127 )
 #define CC2538_RF_RSSI_OFFSET      ( 73 )
+#define CC2538_RF_CSP_OP_ISRXON     ( 0xE3 )
+#define CC2538_RF_CSP_OP_ISFLUSHRX  ( 0xED )
+
+#define CC2538_RF_CSP_ISRXON()    \
+  do { HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISRXON; } while(0)
+
+#define CC2538_RF_CSP_ISFLUSHRX()  do { \
+  HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISFLUSHRX; \
+  HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISFLUSHRX; \
+} while(0)
 
 #define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
 #define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
@@ -28,9 +41,8 @@
 
 static void serialTask(void*);
 
-static void radioRxInit();
-static void radioRxDone();
 static void uartByteReceived();
+static void radioByteReceived();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -77,8 +89,6 @@ extern GpioOut led_orange;
 extern GpioOut led_red;
 extern GpioOut led_yellow;
 
-static PlainCallback radioRxInitCallback(&radioRxInit);
-static PlainCallback radioRxDoneCallback(&radioRxDone);
 static PlainCallback uartRxCallback(&uartByteReceived);
 
 static uint16_t uartTxBufferLen = 0;
@@ -106,12 +116,6 @@ int main()
     // Enable erasing the Flash with the user button
     board.enableFlashErase();
 
-    // Enable the IEEE 802.15.4 radio
-    radio.setRxCallbacks(&radioRxInitCallback, &radioRxDoneCallback);
-    radio.enable();
-    radio.setChannel(25);
-    radio.enableInterrupts();
-
     // Enable the UART peripheral
     uart.enable(460800/*921600*//*2000000*/, UART_CONFIG, UART_INT_MODE);
     uart.setRxCallback(&uartRxCallback);
@@ -120,9 +124,23 @@ int main()
     // Create the sole task
     xTaskCreate(serialTask, "Serial", configMINIMAL_STACK_SIZE, NULL, SERIAL_SEND_TASK_PRIORITY, NULL);
 
-    // Turn on the radio and start receiving
-    radio.on();
-    radio.receive();
+    // Enable the IEEE 802.15.4 radio
+    radio.enable();
+    radio.setChannel(25);
+
+    // Enable radio interrupts
+    HWREG(RFCORE_XREG_FIFOPCTRL) = 0; // send FIFIP interrupt as soon as buffer contains 1 byte
+    HWREG(RFCORE_XREG_RFIRQM0) = 4; // only FIFOP interrupt
+    HWREG(RFCORE_XREG_RFERRM) = RFCORE_XREG_RFERRM_RFERRM_M; // Enable RF error interrupts (TODO: Look into those errors)
+    IntRegister(INT_RFCORERTX, radioByteReceived);
+    IntPrioritySet(INT_RFCORERTX, (7 << 5));
+    IntEnable(INT_RFCORERTX);
+
+    // Turn on the radio in infinite RX FIFO looping mode (FRMFILT0[3:2] = 10)
+    HWREG(RFCORE_XREG_FRMCTRL0) &= ~0x4;
+    HWREG(RFCORE_XREG_FRMCTRL0) |= 0x8;
+    CC2538_RF_CSP_ISFLUSHRX();
+    CC2538_RF_CSP_ISRXON();
     led_green.on();
 
     // Set up interrupts and call our serial task
@@ -377,9 +395,6 @@ static void serialSend()
     {
         led_yellow.on();
         bufferIndexSerialSend = bufferIndexAcked;
-
-        // TODO: Check if we passed radio pointer when jumping back
-        // TODO: Why? Acked isn't moved
     }
     else
         led_yellow.off();
@@ -425,87 +440,123 @@ static void serialTask(void*)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-static void radioRxInit()
-{
-    // Turn on the radio LED as the radio is now receiving a packet
-    led_red.on();
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-static void radioRxDone()
-{
-    // Turn off the radio LED as the packet is now received
-    led_red.off();
-
-    // Check the packet length (first byte)
-    uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
-    if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
-    {
-        radio.receive();
-        return;
-    }
-
-    uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
-
-    // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
-    if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-      && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
-     || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
-      && (bufferIndexAcked > bufferIndexRadio)
-      && (bufferIndexAcked <= bufferIndexRadio + fullPacketLength)))
-    {
-        // Indicate that we are no longer lossless and discard this packet
-        led_orange.on();
-    }
-    else // No packet lost, continue normally
-    {
-        // Check that there is still space behind the last packet
-        if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-        {
-            // Mark that the last part of the buffer as unused and start at the beginning
-            buffer[bufferIndexRadio] = 0xff;
-            bufferIndexRadio = 0;
-        }
-
-        // Copy the RX buffer to the buffer (except for the CRC)
-        for (uint8_t i = 0; i < packetLength; i++)
-            buffer[bufferIndexRadio+5+i] = HWREG(RFCORE_SFR_RFDATA);
-
-        // The next two bytes are the FCS replacement (2 byte CRC is replaced with 1 byte RSSI, 1 bit FCS Valid and 7 bit LQI)
-        buffer[bufferIndexRadio+5+packetLength] = (int8_t(HWREG(RFCORE_SFR_RFDATA)) - CC2538_RF_RSSI_OFFSET);
-        buffer[bufferIndexRadio+6+packetLength] = HWREG(RFCORE_SFR_RFDATA);
-
-        // We read the RX buffer, the radio can prepare for the next packet
-        radio.receive();
-
-        // Increment sequence number but skip the zero after using the highest number
-        if (++seqNr == 0)
-            seqNr = 1;
-
-        // Put the amount of bytes that we will use (including this length byte) in the buffer
-        buffer[bufferIndexRadio] = fullPacketLength;
-
-        // The first two bytes are the index in the buffer right after this packet
-        buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
-        buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
-
-        // The next two bytes form the sequence number (for verifying if correct packet is still in buffer)
-        buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
-        buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
-
-        // Move the buffer index forward
-        bufferIndexRadio += fullPacketLength;
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 static void uartByteReceived()
 {
     uartRxBuffer[uartRxBufferIndexWrite] = uart.readByte();
     if (++uartRxBufferIndexWrite == UART_RX_BUFFER_LEN)
         uartRxBufferIndexWrite = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static bool receiving = false;
+static bool validPacket = false;
+static uint8_t packetLength = 0;
+static uint8_t bytesReceived = 0;
+
+static void radioByteReceived()
+{
+    // Read RFCORE_STATUS
+    uint32_t irq_status0 = HWREG(RFCORE_SFR_RFIRQF0);
+
+    // Clear pending interrupt and RFCORE_STATUS
+    IntPendClear(INT_RFCORERTX);
+    HWREG(RFCORE_SFR_RFIRQF0) = 0;
+
+    // Check whether this was the first byte of not
+    if (irq_status0 == (RFCORE_SFR_RFIRQF0_FIFOP | RFCORE_SFR_RFIRQF0_SFD))
+    {
+        // TODO: What happens when size is longer than actual packet? Receive is only re-enabled after all expected bytes are read
+
+        // We are now receiving
+        led_red.on();
+        receiving = true;
+        bytesReceived = 0;
+
+        // The first byte (the one we just received) contains the packet length
+        packetLength = HWREG(RFCORE_SFR_RFDATA);
+
+        // Check if the packet length is valid
+        if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
+        {
+            validPacket = false; // TODO: What to do with such packets?
+            return;
+        }
+
+        uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
+
+        // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
+        if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+          && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
+         || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
+          && (bufferIndexAcked > bufferIndexRadio)
+          && (bufferIndexAcked <= bufferIndexRadio + fullPacketLength)))
+        {
+            // Indicate that we are no longer lossless and discard this packet
+            led_orange.on();
+            validPacket = false;
+        }
+        else // No packet lost, continue normally
+        {
+            // Check that there is still space behind the last packet
+            if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+            {
+                // Mark that the last part of the buffer as unused and start at the beginning
+                buffer[bufferIndexRadio] = 0xff;
+                bufferIndexRadio = 0;
+            }
+
+            validPacket = true;
+        }
+    }
+    else if (irq_status0 == RFCORE_SFR_RFIRQF0_FIFOP)
+    {
+        if (receiving && validPacket)
+        {
+            if (bytesReceived == packetLength)
+            {
+                // TODO: More bytes in frame than header stated. What to do in this case (extra bytes are hard to add)?
+                validPacket = false;
+                return;
+            }
+
+            // Put the read byte in the buffer
+            buffer[bufferIndexRadio+5+bytesReceived] = HWREG(RFCORE_SFR_RFDATA);
+
+            // Fill in the rest of the buffer when this was the last byte
+            if (++bytesReceived == packetLength)
+            {
+                uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
+
+                // Increment sequence number but skip the zero after using the highest number
+                if (++seqNr == 0)
+                    seqNr = 1;
+
+                // Put the amount of bytes that we will use (including this length byte) in the buffer
+                buffer[bufferIndexRadio] = fullPacketLength;
+
+                // The first two bytes are the index in the buffer right after this packet
+                buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
+                buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
+
+                // The next two bytes form the sequence number
+                buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
+                buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+
+                // Move the buffer index forward
+                bufferIndexRadio += fullPacketLength;
+
+                // Ready for next packet
+                receiving = false;
+                CC2538_RF_CSP_ISRXON();
+            }
+        }
+    }
+    else // This should not be possible
+    {
+        // Something happened that never happened before
+        led_green.off();
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
