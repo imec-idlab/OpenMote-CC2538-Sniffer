@@ -9,7 +9,7 @@ git clone https://bitbucket.org/texus/openmote-cc2538-802.15.4-sniffer
 git submodule update --init --recursive
 ```
 
-Then patch the bsl script which was hardcoded to run only programs from inside the firmware folder:
+A few small changes are required in the OpenMote firmware to make the sniffer work, you can apply them by executing the following:
 ``` bash
 patch -p0 < bsl-patch.diff
 ```
@@ -40,10 +40,6 @@ sudo python serial-connect.py
 
 ## Current modules
 - sniffer  
-    The actual sniffer program which is supposed to be lossless
-- debug-receiver  
-    Just show the received data in an unoptimized best-effort way
+    The actual sniffer program
 - custom-TX  
-    Transmits packets with a sequence number one after the other
-- max-radio-performance  
-    Transmit packets as fast as possible by manually accessing radio and making various optimizations (max 1942 packets/sec)
+    Transmits packets with various lengths as fast as possible

@@ -1,0 +1,26 @@
+--- OpenMoteFirmware/tools/openmote-bsl/openmote-bsl.py
++++ OpenMoteFirmware/tools/openmote-bsl/openmote-bsl.py
+@@ -25,6 +25,8 @@
+ 
+ # Define the relative path to the project home
+ openmote_bsl_path = "../../tools/openmote-bsl"
++if not os.path.isdir(openmote_bsl_path):
++    openmote_bsl_path = "../OpenMoteFirmware/tools/openmote-bsl"
+ 
+ # Define logging file name, path and configuration
+ log_name = "openmote-bsl.cfg"
+--- OpenMoteFirmware/platform/cc2538/cc2538_linker.lds
++++ OpenMoteFirmware/platform/cc2538/cc2538_linker.lds
+@@ -80,6 +80,12 @@
+         _text_end = .;
+     } > FLASH = 0
+ 
++    /* Put UDMA Channel Control Table at start of SRAM to avoid large padding as address must be aligned on a 1024-byte boundary */
++    .socdata (NOLOAD) :
++    {
++        *(.udma_channel_control_table)
++    } > SRAM2
++
+     /* Holds the stack at the start of SRAM */
+     .stack (NOLOAD) :
+     {

@@ -209,8 +209,6 @@ def program():
 
     print('Connected to sniffer')
 
-    pkts = 0
-    begin = time.time()
     while(True):
         c = ser.read(1)
         if len(c) > 0:
@@ -232,12 +230,6 @@ def program():
                                 print('Sniffer reset detected, restarting')
                                 return True
 
-                            pkts += 1
-                            if time.time() - begin > 1:
-                                print(pkts)
-                                pkts = 0
-                                begin = time.time()
-
                             # Ignore the packet if it had a wrong sequence number
                             if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
                                 expectedSeqNr += 1
@@ -246,11 +238,11 @@ def program():
 
                                 totalCount += 1
                                 count += 1
-                                if count == 25000:
+                                if count == 60000:
                                     count = 1
 
                                 receivedCount = (ord(word[4]) << 8) + ord(word[5])
-                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)) + ' ' + word)
+                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])))
                                 if count != receivedCount:
                                     # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                                     if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):

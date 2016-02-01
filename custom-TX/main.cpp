@@ -13,6 +13,23 @@
 
 /*================================ typedef ==================================*/
 
+enum Phase
+{
+    MinLength,
+    MediumLength,
+    MaxLength,
+    RapidMinMaxChange,
+    Increasing,
+    Decreasing,
+    SmallRandom,
+    MediumRandom,
+    LargeRandom,
+    FullyRandom1,
+    FullyRandom2,
+    FullyRandom3,
+    PhaseCount // # of phases described in this enum
+};
+
 /*=============================== prototypes ================================*/
 
 static void prvGreenLedTask(void *pvParameters);
@@ -93,7 +110,7 @@ uint8_t rnd()
     // Clock the RNG LSFR once
     HWREG(SOC_ADC_ADCCON1) |= 0x00000004;
 
-    uint32_t retVal = (HWREG(SOC_ADC_RNDL) | (HWREG(SOC_ADC_RNDH) << 8)) & 0x80;
+    uint32_t retVal = (HWREG(SOC_ADC_RNDL) | (HWREG(SOC_ADC_RNDH) << 8)) & 0x7F;
 
     if (retVal < 2)
         return 2;
@@ -112,19 +129,91 @@ static void prvRadioSendTask(void *pvParameters)
 
     uint16_t packetLen = rnd();
     uint16_t count = 0;
+    uint32_t byteCountInPhase = 0;
+    uint32_t maxBytesInPhase = 100000;
+    uint8_t phase = 0;
     while (true)
     {
-        if (++count == 25000)
+        if (++count == 60000)
             count = 1;
 
         radio_buffer[0] = (count >> 8) & 0xff;
         radio_buffer[1] = count & 0xff;
 
-        packetLen = rnd();
-        if (count % 2)
-            packetLen = 2;
-        else
-            packetLen = 125;
+        // Determine the packet length based on the phase
+        switch (phase)
+        {
+            case MinLength:
+                packetLen = 2;
+                break;
+            case MediumLength:
+                packetLen = 60;
+                break;
+            case MaxLength:
+                packetLen = 125;
+                break;
+            case RapidMinMaxChange:
+            {
+                uint8_t multiplier = (10 * (byteCountInPhase / (float)maxBytesInPhase)) + 1;
+                if (count % (2 * multiplier) < multiplier)
+                    packetLen = 125;
+                else
+                    packetLen = 2;
+                break;
+            }
+            case Increasing:
+                packetLen = (count % 124) + 2;
+                break;
+            case Decreasing:
+                packetLen = 125 - (count % 124);
+                break;
+            case SmallRandom:
+            {
+                uint8_t rand = rnd();
+                while (rand > 30)
+                    rand -= 29;
+                packetLen = rand;
+                break;
+            }
+            case MediumRandom:
+            {
+                uint8_t rand = rnd();
+                if (rand < 38)
+                    rand += 36;
+                if (rand > 83)
+                    rand -= 42;
+                packetLen = rand;
+                break;
+            }
+            case LargeRandom:
+            {
+                uint8_t rand = rnd();
+                while (rand < 95)
+                    rand += 30;
+                packetLen = rand;
+                break;
+            }
+            default:
+            {
+                packetLen = rnd();
+                break;
+            }
+        };
+
+        // Go to the next phase every now and then
+        byteCountInPhase += packetLen;
+        if (byteCountInPhase >= maxBytesInPhase)
+        {
+            phase = (phase + 1) % PhaseCount;
+            byteCountInPhase = 0;
+
+            if (phase == MinLength)
+                maxBytesInPhase = 100000;
+            else if (phase == MediumLength)
+                maxBytesInPhase = 500000;
+            else
+                maxBytesInPhase = 1000000;
+        }
 
         // Wait for ongoing TX to complete
         while (HWREG(RFCORE_XREG_FSMSTAT1) & RFCORE_XREG_FSMSTAT1_TX_ACTIVE)

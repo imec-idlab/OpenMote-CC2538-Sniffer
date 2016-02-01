@@ -1,21 +1,19 @@
 #include "Board.h"
 #include "Radio.h"
 #include "Uart.h"
+#include "udma.h"
 #include "uart.h"
 #include "hw_ints.h"
 #include "hw_rfcore_sfr.h"
 #include "hw_rfcore_xreg.h"
 #include "interrupt.h"
+#include "hw_udma.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define HDLC_FLAG           0x7E
 #define HDLC_ESCAPE         0x7D
 #define HDLC_ESCAPE_MASK    0x20
-
-#define GREEN_LED_TASK_PRIORITY      ( tskIDLE_PRIORITY + 4 )
-#define RADIO_RECEIVE_TASK_PRIORITY  ( tskIDLE_PRIORITY + 3 )
-#define SERIAL_SEND_TASK_PRIORITY    ( tskIDLE_PRIORITY + 1 )
 
 #define CC2538_RF_MIN_PACKET_LEN   ( 3 )
 #define CC2538_RF_MAX_PACKET_LEN   ( 127 )
@@ -34,17 +32,32 @@
 #define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
 #define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
 
-#define BUFFER_LEN              9000
+#define UDMA_RX_SIZE_THRESHOLD      5
+#define CC2538_RF_CONF_RX_DMA_CHAN  3
+
+#define BUFFER_LEN              8500
 #define UART_RX_BUFFER_LEN      128
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+static void uartByteReceived();
+static void radioInterruptHandler();
+
+static void hdlc(uint8_t dataLength);
+static void serialReceive(uint8_t byte);
+static void serialSend();
+
 static void serialTask(void*);
 
-static void uartByteReceived();
-static void radioByteReceived();
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+extern Board board;
+extern Uart uart;
+extern Radio radio;
+extern GpioOut led_green;
+extern GpioOut led_orange;
+extern GpioOut led_red;
+extern GpioOut led_yellow;
 
 static const uint16_t lut[256] = {
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
@@ -81,13 +94,7 @@ static const uint16_t lut[256] = {
     0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
 };
 
-extern Board board;
-extern Uart uart;
-extern Radio radio;
-extern GpioOut led_green;
-extern GpioOut led_orange;
-extern GpioOut led_red;
-extern GpioOut led_yellow;
+static volatile tDMAControlTable channelConfigUDMA __attribute__((section(".udma_channel_control_table")));
 
 static PlainCallback uartRxCallback(&uartByteReceived);
 
@@ -116,27 +123,32 @@ int main()
     // Enable erasing the Flash with the user button
     board.enableFlashErase();
 
+    // Create the sole task
+    xTaskCreate(serialTask, "Serial", 128, NULL, tskIDLE_PRIORITY+1, NULL);
+
+    // Initialize uDMA
+    uDMAEnable();
+    uDMAControlBaseSet((void*)&channelConfigUDMA);
+    uDMAChannelAttributeEnable(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
+    uDMAChannelControlSet(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_128);
+
     // Enable the UART peripheral
-    uart.enable(460800/*921600*//*2000000*/, UART_CONFIG, UART_INT_MODE);
+    uart.enable(460800, UART_CONFIG, UART_INT_MODE);
     uart.setRxCallback(&uartRxCallback);
     uart.enableInterrupts();
-
-    // Create the sole task
-    xTaskCreate(serialTask, "Serial", configMINIMAL_STACK_SIZE, NULL, SERIAL_SEND_TASK_PRIORITY, NULL);
 
     // Enable the IEEE 802.15.4 radio
     radio.enable();
     radio.setChannel(25);
 
     // Enable radio interrupts
-    HWREG(RFCORE_XREG_FIFOPCTRL) = 0; // send FIFIP interrupt as soon as buffer contains 1 byte
-    HWREG(RFCORE_XREG_RFIRQM0) = 4; // only FIFOP interrupt
+    HWREG(RFCORE_XREG_RFIRQM0) = 0x46; // RXPKTDONE, SFD and FIFOP interrupts
     HWREG(RFCORE_XREG_RFERRM) = RFCORE_XREG_RFERRM_RFERRM_M; // Enable RF error interrupts (TODO: Look into those errors)
-    IntRegister(INT_RFCORERTX, radioByteReceived);
-    IntPrioritySet(INT_RFCORERTX, (7 << 5));
+    IntRegister(INT_RFCORERTX, radioInterruptHandler);
+    IntPrioritySet(INT_RFCORERTX, (6 << 5)); // More important than UART interrupt
     IntEnable(INT_RFCORERTX);
 
-    // Turn on the radio in receive mode
+    // Flush the RX buffer and start receiving
     CC2538_RF_CSP_ISFLUSHRX();
     CC2538_RF_CSP_ISRXON();
     led_green.on();
@@ -144,6 +156,113 @@ int main()
     // Set up interrupts and call our serial task
     portDISABLE_INTERRUPTS();
     xPortStartScheduler();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void uartByteReceived()
+{
+    uartRxBuffer[uartRxBufferIndexWrite] = uart.readByte();
+    if (++uartRxBufferIndexWrite == UART_RX_BUFFER_LEN)
+        uartRxBufferIndexWrite = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void radioInterruptHandler()
+{
+    // Read RFCORE_STATUS
+    uint32_t irq_status0 = HWREG(RFCORE_SFR_RFIRQF0);
+
+    // Clear pending interrupt and RFCORE_STATUS
+    IntPendClear(INT_RFCORERTX);
+    HWREG(RFCORE_SFR_RFIRQF0) = 0;
+
+    // Check for start of frame interrupt
+    if ((irq_status0 & RFCORE_SFR_RFIRQF0_SFD) == RFCORE_SFR_RFIRQF0_SFD)
+    {
+        led_yellow.on();
+    }
+
+    // Check for end of frame interrupt
+    if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) == RFCORE_SFR_RFIRQF0_RXPKTDONE)
+    {
+        // Make sure the packet length is valid
+        uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
+        if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
+        {
+            // TODO: What to do with such packets where the packet length is wrong?
+            CC2538_RF_CSP_ISFLUSHRX();
+            CC2538_RF_CSP_ISRXON();
+            return;
+        }
+
+        uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
+
+        // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
+        if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+          && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
+         || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
+          && (bufferIndexAcked > bufferIndexRadio)
+          && (bufferIndexAcked <= bufferIndexRadio + fullPacketLength)))
+        {
+            // Indicate that we are no longer lossless and discard this packet
+            led_red.on();
+            CC2538_RF_CSP_ISFLUSHRX();
+            CC2538_RF_CSP_ISRXON();
+            return;
+            // TODO: When this occurs when script is terminated, find out why nothing happens when script is restarted
+        }
+
+        // Increment sequence number but skip the zero after using the highest number
+        if (++seqNr == 0)
+            seqNr = 1;
+
+        // Check that there is still space behind the last packet
+        if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
+        {
+            // Mark that the last part of the buffer as unused and start at the beginning
+            buffer[bufferIndexRadio] = 0xff;
+            bufferIndexRadio = 0;
+        }
+
+        // Put the amount of bytes that we will use (including this length byte) in the buffer
+        buffer[bufferIndexRadio] = fullPacketLength;
+
+        // The first two bytes are the index in the buffer right after this packet
+        buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
+        buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
+
+        // The next two bytes form the sequence number (for verifying if correct packet is still in buffer)
+        buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
+        buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+
+        // Copy the RX buffer to our buffer (using uDMA unless the packet is really small)
+        if (packetLength > 5)
+        {
+            uDMAChannelTransferSet(CC2538_RF_CONF_RX_DMA_CHAN,
+                                   UDMA_MODE_BASIC,
+                                   (void*)RFCORE_SFR_RFDATA,
+                                   &buffer[bufferIndexRadio+5],
+                                   packetLength);
+            uDMAChannelEnable(CC2538_RF_CONF_RX_DMA_CHAN);
+            uDMAChannelRequest(CC2538_RF_CONF_RX_DMA_CHAN);
+            while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+                ;
+        }
+        else // Very small packet
+        {
+            for (uint8_t i = 0; i < packetLength; i++)
+                buffer[bufferIndexRadio+i+5] = HWREG(RFCORE_SFR_RFDATA);
+        }
+
+        // Move the buffer index forward
+        bufferIndexRadio += fullPacketLength;
+
+        // Ready for next packet
+        CC2538_RF_CSP_ISRXON();
+        led_yellow.off();
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -247,7 +366,7 @@ static void serialReceive(uint8_t byte)
                         }
                         else // This should not be possible, drop buffer
                         {
-                            led_orange.on();
+                            led_red.on();
                             bufferIndexSerialSend = bufferIndexRadio;
                         }
                     }
@@ -273,7 +392,7 @@ static void serialReceive(uint8_t byte)
                         }
                         else // This should not be possible, drop buffer
                         {
-                            led_orange.on();
+                            led_red.on();
                             bufferIndexSerialSend = bufferIndexRadio;
                         }
                     }
@@ -299,8 +418,8 @@ static void serialReceive(uint8_t byte)
                         UARTCharPut(uart.getBase(), 58);
                         UARTCharPut(uart.getBase(), HDLC_FLAG);
 
-                        led_yellow.off();
                         led_orange.off();
+                        led_red.off();
                     }
                     else // Invalid packet received, resend everything up to the last received ACK
                         bufferIndexSerialSend = bufferIndexAcked;
@@ -374,10 +493,13 @@ static void serialSend()
 
     // Fill the transmit buffer
     if (buffer[bufferIndexSerialSend] <= 132)
-        hdlc(buffer[bufferIndexSerialSend] - 1);
-    else
     {
-        led_orange.on();
+        hdlc(buffer[bufferIndexSerialSend] - 1);
+    }
+    else // This should not be possible, drop buffer
+    {
+        led_red.on();
+        bufferIndexSerialSend = bufferIndexRadio;
         return;
     }
 
@@ -388,14 +510,19 @@ static void serialSend()
     bufferIndexSerialSend += buffer[bufferIndexSerialSend];
 
     // When we didn't receive an ACK for some time we must resend packets
-    if (((bufferIndexSerialSend > bufferIndexAcked) && (bufferIndexSerialSend - bufferIndexAcked >= 1000))
-     || ((bufferIndexSerialSend < bufferIndexAcked) && (BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend >= 1000)))
+    uint16_t dist = 0;
+    if (bufferIndexSerialSend > bufferIndexAcked)
+        dist = bufferIndexSerialSend - bufferIndexAcked;
+    else if (bufferIndexSerialSend < bufferIndexAcked)
+        dist = BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend;
+
+    if (dist > 800)
     {
-        led_yellow.on();
         bufferIndexSerialSend = bufferIndexAcked;
+        led_orange.on();
     }
     else
-        led_yellow.off();
+        led_orange.off();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -433,129 +560,6 @@ static void serialTask(void*)
         {
             serialSend();
         }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-static void uartByteReceived()
-{
-    uartRxBuffer[uartRxBufferIndexWrite] = uart.readByte();
-    if (++uartRxBufferIndexWrite == UART_RX_BUFFER_LEN)
-        uartRxBufferIndexWrite = 0;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-static bool receiving = false;
-static bool validPacket = false;
-static uint8_t packetLength = 0;
-static uint8_t bytesReceived = 0;
-
-static void radioByteReceived()
-{
-    // Read RFCORE_STATUS
-    uint32_t irq_status0 = HWREG(RFCORE_SFR_RFIRQF0);
-
-    // Clear pending interrupt and RFCORE_STATUS
-    IntPendClear(INT_RFCORERTX);
-    HWREG(RFCORE_SFR_RFIRQF0) = 0;
-
-    // Check whether this was the first byte of not
-    if (irq_status0 == (RFCORE_SFR_RFIRQF0_FIFOP | RFCORE_SFR_RFIRQF0_SFD))
-    {
-        // TODO: What happens when size is longer than actual packet? Receive is only re-enabled after all expected bytes are read
-
-        // We are now receiving
-        led_red.on();
-        receiving = true;
-        bytesReceived = 0;
-
-        // The first byte (the one we just received) contains the packet length
-        packetLength = HWREG(RFCORE_SFR_RFDATA);
-
-        // Check if the packet length is valid
-        if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
-        {
-            validPacket = false; // TODO: What to do with such packets?
-
-            CC2538_RF_CSP_ISFLUSHRX();
-            CC2538_RF_CSP_ISRXON();
-            return;
-        }
-
-        uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
-
-        // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
-        if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-          && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
-         || ((bufferIndexRadio + fullPacketLength < BUFFER_LEN)
-          && (bufferIndexAcked > bufferIndexRadio)
-          && (bufferIndexAcked <= bufferIndexRadio + fullPacketLength)))
-        {
-            // Indicate that we are no longer lossless and discard this packet
-            led_orange.on();
-            validPacket = false;
-
-            CC2538_RF_CSP_ISFLUSHRX();
-            CC2538_RF_CSP_ISRXON();
-        }
-        else // No packet lost, continue normally
-        {
-            // Check that there is still space behind the last packet
-            if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
-            {
-                // Mark that the last part of the buffer as unused and start at the beginning
-                buffer[bufferIndexRadio] = 0xff;
-                bufferIndexRadio = 0;
-            }
-
-            // Increment sequence number but skip the zero after using the highest number
-            if (++seqNr == 0)
-                seqNr = 1;
-
-            // Put the amount of bytes that we will use (including this length byte) in the buffer
-            buffer[bufferIndexRadio] = fullPacketLength;
-
-            // The first two bytes are the index in the buffer right after this packet
-            buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
-
-            buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
-
-            // The next two bytes form the sequence number
-            buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
-            buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
-
-            validPacket = true;
-        }
-    }
-    else if ((irq_status0 & RFCORE_SFR_RFIRQF0_FIFOP) == RFCORE_SFR_RFIRQF0_FIFOP)
-    {
-        if (receiving && validPacket)
-        {
-            /// TODO Can buffer overflow here because packet is longer than expected, does RXPKTDONE still arrive in time then?
-            // Put the read byte in the buffer
-            buffer[bufferIndexRadio+5+bytesReceived] = HWREG(RFCORE_SFR_RFDATA);
-            ++bytesReceived;
-
-            // Check if this was the last byte
-            if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) ==  RFCORE_SFR_RFIRQF0_RXPKTDONE)
-            {
-                // Ready for next packet
-                CC2538_RF_CSP_ISRXON();
-                receiving = false;
-                led_red.on();
-
-                // Move the buffer index forward
-                if (receiving && validPacket)
-                    bufferIndexRadio += packetLength + 5;
-            }
-        }
-    }
-    else // This should not be possible
-    {
-        // Something happened that never happened before
-        led_green.off();
     }
 }
 
