@@ -189,11 +189,14 @@ static void radioInterruptHandler()
     {
         // Make sure the packet length is valid
         uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
-        if ((packetLength > CC2538_RF_MAX_PACKET_LEN) || (packetLength < CC2538_RF_MIN_PACKET_LEN))
+        if ((packetLength > CC2538_RF_MAX_PACKET_LEN)
+         || (packetLength < CC2538_RF_MIN_PACKET_LEN)
+         || (packetLength != HWREG(RFCORE_XREG_RXFIFOCNT)))
         {
             // TODO: What to do with such packets where the packet length is wrong?
             CC2538_RF_CSP_ISFLUSHRX();
             CC2538_RF_CSP_ISRXON();
+            led_green.off();
             return;
         }
 
@@ -211,12 +214,7 @@ static void radioInterruptHandler()
             CC2538_RF_CSP_ISFLUSHRX();
             CC2538_RF_CSP_ISRXON();
             return;
-            // TODO: When this occurs when script is terminated, find out why nothing happens when script is restarted
         }
-
-        // Increment sequence number but skip the zero after using the highest number
-        if (++seqNr == 0)
-            seqNr = 1;
 
         // Check that there is still space behind the last packet
         if (bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
@@ -225,6 +223,19 @@ static void radioInterruptHandler()
             buffer[bufferIndexRadio] = 0xff;
             bufferIndexRadio = 0;
         }
+
+        // Use Direct Memory Access to copy RX buffer to our buffer
+        uDMAChannelTransferSet(CC2538_RF_CONF_RX_DMA_CHAN,
+                               UDMA_MODE_BASIC,
+                               (void*)RFCORE_SFR_RFDATA,
+                               &buffer[bufferIndexRadio+5],
+                               packetLength);
+        uDMAChannelEnable(CC2538_RF_CONF_RX_DMA_CHAN);
+        uDMAChannelRequest(CC2538_RF_CONF_RX_DMA_CHAN);
+
+        // Increment sequence number but skip the zero after using the highest number
+        if (++seqNr == 0)
+            seqNr = 1;
 
         // Put the amount of bytes that we will use (including this length byte) in the buffer
         buffer[bufferIndexRadio] = fullPacketLength;
@@ -237,31 +248,16 @@ static void radioInterruptHandler()
         buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
         buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
 
-        // Copy the RX buffer to our buffer (using uDMA unless the packet is really small)
-        if (packetLength > 5)
-        {
-            uDMAChannelTransferSet(CC2538_RF_CONF_RX_DMA_CHAN,
-                                   UDMA_MODE_BASIC,
-                                   (void*)RFCORE_SFR_RFDATA,
-                                   &buffer[bufferIndexRadio+5],
-                                   packetLength);
-            uDMAChannelEnable(CC2538_RF_CONF_RX_DMA_CHAN);
-            uDMAChannelRequest(CC2538_RF_CONF_RX_DMA_CHAN);
-            while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
-                ;
-        }
-        else // Very small packet
-        {
-            for (uint8_t i = 0; i < packetLength; i++)
-                buffer[bufferIndexRadio+i+5] = HWREG(RFCORE_SFR_RFDATA);
-        }
+        // Ready for next packet
+        CC2538_RF_CSP_ISRXON();
+        led_yellow.off();
 
         // Move the buffer index forward
         bufferIndexRadio += fullPacketLength;
 
-        // Ready for next packet
-        CC2538_RF_CSP_ISRXON();
-        led_yellow.off();
+        // Wait for the DMA to complete
+        while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+            ;
     }
 }
 
@@ -405,6 +401,7 @@ static void serialReceive(uint8_t byte)
                     {
                         // Empty buffer and reset sequence number
                         bufferIndexSerialSend = bufferIndexRadio;
+                        bufferIndexAcked = bufferIndexSerialSend;
                         seqNr = 0;
 
                         // Send the READY message
