@@ -125,7 +125,7 @@ static void prvRadioSendTask(void *pvParameters)
     seedRandom();
 
     radio.enable();
-    radio.setChannel(25);
+    radio.setChannel(26);
 
     uint16_t packetLen = rnd();
     uint16_t count = 0;

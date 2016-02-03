@@ -139,21 +139,16 @@ int main()
 
     // Enable the IEEE 802.15.4 radio
     radio.enable();
-    radio.setChannel(25);
+    radio.setChannel(26);
 
-    // Enable radio interrupts
+    // Set up radio interrupts but don't enable them until pc is connected
     HWREG(RFCORE_XREG_RFIRQM0) = 0x46; // RXPKTDONE, SFD and FIFOP interrupts
     HWREG(RFCORE_XREG_RFERRM) = RFCORE_XREG_RFERRM_RFERRM_M; // Enable RF error interrupts (TODO: Look into those errors)
     IntRegister(INT_RFCORERTX, radioInterruptHandler);
     IntPrioritySet(INT_RFCORERTX, (6 << 5)); // More important than UART interrupt
-    IntEnable(INT_RFCORERTX);
-
-    // Flush the RX buffer and start receiving
-    CC2538_RF_CSP_ISFLUSHRX();
-    CC2538_RF_CSP_ISRXON();
-    led_green.on();
 
     // Set up interrupts and call our serial task
+    led_green.on();
     portDISABLE_INTERRUPTS();
     xPortStartScheduler();
 }
@@ -185,7 +180,7 @@ static void radioInterruptHandler()
     }
 
     // Check for end of frame interrupt
-    if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) == RFCORE_SFR_RFIRQF0_RXPKTDONE)
+    else if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) == RFCORE_SFR_RFIRQF0_RXPKTDONE)
     {
         // Make sure the packet length is valid
         uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
@@ -196,7 +191,6 @@ static void radioInterruptHandler()
             // TODO: What to do with such packets where the packet length is wrong?
             CC2538_RF_CSP_ISFLUSHRX();
             CC2538_RF_CSP_ISRXON();
-            led_green.off();
             return;
         }
 
@@ -259,6 +253,8 @@ static void radioInterruptHandler()
         while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
             ;
     }
+
+    // TODO: Also check for RFCORE_SFR_RFIRQF0_FIFOP and flush if it occurs?
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -347,9 +343,9 @@ static void serialReceive(uint8_t byte)
                     messageLen -= 2;
 
                     if ((messageLen == 7)
-                     && (message[0] = 'A')
-                     && (message[1] = 'C')
-                     && (message[2] = 'K'))
+                     && (message[0] == 'A')
+                     && (message[1] == 'C')
+                     && (message[2] == 'K'))
                     {
                         uint16_t index = (message[3] << 8) + message[4];
                         uint16_t seqNr = (message[5] << 8) + message[6];
@@ -367,10 +363,10 @@ static void serialReceive(uint8_t byte)
                         }
                     }
                     else if ((messageLen == 8)
-                     && (message[0] = 'N')
-                     && (message[1] = 'A')
-                     && (message[2] = 'C')
-                     && (message[3] = 'K'))
+                     && (message[0] == 'N')
+                     && (message[1] == 'A')
+                     && (message[2] == 'C')
+                     && (message[3] == 'K'))
                     {
                         uint16_t index = (message[4] << 8) + message[5];
                         uint16_t seqNr = (message[6] << 8) + message[7];
@@ -392,17 +388,25 @@ static void serialReceive(uint8_t byte)
                             bufferIndexSerialSend = bufferIndexRadio;
                         }
                     }
-                    else if ((messageLen == 5)
-                     && (message[0] = 'R')
-                     && (message[1] = 'E')
-                     && (message[2] = 'S')
-                     && (message[3] = 'E')
-                     && (message[4] = 'T'))
+                    else if ((messageLen == 4)
+                     && (message[0] == 'R')
+                     && (message[1] == 'S')
+                     && (message[2] == 'T'))
                     {
+                        IntDisable(INT_RFCORERTX);
+                        led_green.off();
+                        led_yellow.off();
+                        led_orange.off();
+                        led_red.off();
+
                         // Empty buffer and reset sequence number
-                        bufferIndexSerialSend = bufferIndexRadio;
-                        bufferIndexAcked = bufferIndexSerialSend;
+                        bufferIndexRadio = 0;
+                        bufferIndexSerialSend = 0;
+                        bufferIndexAcked = 0;
                         seqNr = 0;
+
+                        // Set the requested channel
+                        radio.setChannel(message[3]);
 
                         // Send the READY message
                         UARTCharPut(uart.getBase(), HDLC_FLAG);
@@ -415,8 +419,20 @@ static void serialReceive(uint8_t byte)
                         UARTCharPut(uart.getBase(), 58);
                         UARTCharPut(uart.getBase(), HDLC_FLAG);
 
-                        led_orange.off();
-                        led_red.off();
+                        // Allow new radio packets now
+                        CC2538_RF_CSP_ISFLUSHRX();
+                        IntEnable(INT_RFCORERTX);
+                        CC2538_RF_CSP_ISRXON();
+                    }
+                    else if ((messageLen == 4)
+                     && (message[0] == 'S')
+                     && (message[1] == 'T')
+                     && (message[2] == 'O')
+                     && (message[3] == 'P'))
+                    {
+                        IntDisable(INT_RFCORERTX);
+                        CC2538_RF_CSP_ISFLUSHRX();
+                        led_green.on();
                     }
                     else // Invalid packet received, resend everything up to the last received ACK
                         bufferIndexSerialSend = bufferIndexAcked;

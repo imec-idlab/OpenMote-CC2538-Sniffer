@@ -3,7 +3,6 @@
 import serial
 import struct
 import os
-import random
 import fcntl
 import subprocess
 import time
@@ -100,6 +99,9 @@ HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
 HDLC_ESCAPE_MASK = 0x20
 
+channel = 26
+ser = serial.Serial()
+
 def calcCRC(string):
     crc = 0xFFFF
     for c in string:
@@ -161,7 +163,25 @@ def encode(string):
     return chr(HDLC_FLAG) + str(byteArray) + chr(HDLC_FLAG)
 
 
+def pickRadioChannel():
+    global channel
+    channel = -1
+    while (channel != 0 and (channel < 11 or channel > 26)): 
+        try:
+            channel = int(raw_input("Select the IEEE 802.15.4 channel number (11-26, 0 = exit): "))
+        except (KeyboardInterrupt):
+            return False
+        except:
+            pass
+
+    if (channel != 0):
+        print('Setting radio channel to ' + str(channel))
+        return True
+    else:
+        return False
+
 def program():
+    global ser
     ser = serial.Serial(port     = '/dev/ttyUSB0',
                         baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
                         parity   = serial.PARITY_NONE,
@@ -185,7 +205,7 @@ def program():
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     while lastSeqNr == -1:
         print('Connecting...')
-        ser.write(encode('RESET'))
+        ser.write(encode('RST' + chr(channel)))
         begin = time.time()
         while time.time() - begin < 1:
             c = ser.read(1)
@@ -242,11 +262,11 @@ def program():
                                     count = 1
 
                                 receivedCount = (ord(word[4]) << 8) + ord(word[5])
-                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])))
+                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])) + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
                                 if count != receivedCount:
                                     # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
                                     if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
-                                        print("ERROR: Packet lost!")
+                                        print("ERROR: Packet lost! " + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
                                         quit()
                                     else:
                                         faultyPacketIgnored = True
@@ -292,16 +312,17 @@ def program():
 
 def main():
     try:
-        random.seed()
-
         #tun_interface.start()
 
-        # When the program notices a reset from the OpenMote, it can restart itself
-        while program():
-            pass
-
-        #tun_interface.stop()
+        while pickRadioChannel():
+            try:
+                program()
+            except (KeyboardInterrupt):
+                print('sending STOP')
+                ser.write(encode('STOP'))
     except (KeyboardInterrupt):
+        pass
+    finally:
         #tun_interface.stop()
         pass
 
