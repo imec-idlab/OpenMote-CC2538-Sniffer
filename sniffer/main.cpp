@@ -32,7 +32,6 @@
 #define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
 #define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
 
-#define UDMA_RX_SIZE_THRESHOLD      5
 #define CC2538_RF_CONF_RX_DMA_CHAN  3
 
 #define BUFFER_LEN              8500
@@ -41,8 +40,10 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void uartByteReceived();
+static void uDMATransferCompleted();
 static void radioInterruptHandler();
 
+static void flushRadioRX();
 static void hdlc(uint8_t dataLength);
 static void serialReceive(uint8_t byte);
 static void serialSend();
@@ -110,6 +111,7 @@ static uint16_t bufferIndexRadio = 0;
 static uint16_t bufferIndexSerialSend = 0;
 static uint16_t bufferIndexAcked = 0;
 
+static uint8_t fullPacketLengthCopy = 0;
 static uint16_t seqNr = 0;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -131,6 +133,8 @@ int main()
     uDMAControlBaseSet((void*)&channelConfigUDMA);
     uDMAChannelAttributeEnable(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
     uDMAChannelControlSet(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_128);
+    uDMAIntRegister(UDMA_INT_SW, &uDMATransferCompleted);
+    IntPrioritySet(UDMA_INT_SW, (5 << 5)); // Most important interrupt of all
 
     // Enable the UART peripheral
     uart.enable(460800, UART_CONFIG, UART_INT_MODE);
@@ -164,6 +168,14 @@ static void uartByteReceived()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+static void uDMATransferCompleted()
+{
+    bufferIndexRadio += fullPacketLengthCopy;
+    fullPacketLengthCopy = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 static void radioInterruptHandler()
 {
     // Read RFCORE_STATUS
@@ -189,12 +201,15 @@ static void radioInterruptHandler()
          || (packetLength != HWREG(RFCORE_XREG_RXFIFOCNT)))
         {
             // TODO: What to do with such packets where the packet length is wrong?
-            CC2538_RF_CSP_ISFLUSHRX();
-            CC2538_RF_CSP_ISRXON();
+            flushRadioRX();
             return;
         }
 
         uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
+
+        // Wait for possible ongoing DMA to complete
+        while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+            ;
 
         // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
         if (((bufferIndexRadio + fullPacketLength >= BUFFER_LEN)
@@ -205,8 +220,7 @@ static void radioInterruptHandler()
         {
             // Indicate that we are no longer lossless and discard this packet
             led_red.on();
-            CC2538_RF_CSP_ISFLUSHRX();
-            CC2538_RF_CSP_ISRXON();
+            flushRadioRX();
             return;
         }
 
@@ -218,9 +232,11 @@ static void radioInterruptHandler()
             bufferIndexRadio = 0;
         }
 
-        // Use Direct Memory Access to copy RX buffer to our buffer
+        // Copy the RX buffer to our buffer with Direct Memory Access
+        fullPacketLengthCopy = fullPacketLength;
+        uint16_t bufferIndexRadioCopy = bufferIndexRadio;
         uDMAChannelTransferSet(CC2538_RF_CONF_RX_DMA_CHAN,
-                               UDMA_MODE_BASIC,
+                               UDMA_MODE_AUTO,
                                (void*)RFCORE_SFR_RFDATA,
                                &buffer[bufferIndexRadio+5],
                                packetLength);
@@ -232,29 +248,34 @@ static void radioInterruptHandler()
             seqNr = 1;
 
         // Put the amount of bytes that we will use (including this length byte) in the buffer
-        buffer[bufferIndexRadio] = fullPacketLength;
+        buffer[bufferIndexRadioCopy] = fullPacketLength;
 
         // The first two bytes are the index in the buffer right after this packet
-        buffer[bufferIndexRadio+1] = (bufferIndexRadio >> 8) & 0xff;
-        buffer[bufferIndexRadio+2] = (bufferIndexRadio >> 0) & 0xff;
+        buffer[bufferIndexRadioCopy+1] = (bufferIndexRadioCopy >> 8) & 0xff;
+        buffer[bufferIndexRadioCopy+2] = (bufferIndexRadioCopy >> 0) & 0xff;
 
         // The next two bytes form the sequence number (for verifying if correct packet is still in buffer)
-        buffer[bufferIndexRadio+3] = (seqNr >> 8) & 0xff;
-        buffer[bufferIndexRadio+4] = (seqNr >> 0) & 0xff;
+        buffer[bufferIndexRadioCopy+3] = (seqNr >> 8) & 0xff;
+        buffer[bufferIndexRadioCopy+4] = (seqNr >> 0) & 0xff;
 
         // Ready for next packet
         CC2538_RF_CSP_ISRXON();
         led_yellow.off();
-
-        // Move the buffer index forward
-        bufferIndexRadio += fullPacketLength;
-
-        // Wait for the DMA to complete
-        while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
-            ;
     }
 
     // TODO: Also check for RFCORE_SFR_RFIRQF0_FIFOP and flush if it occurs?
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void flushRadioRX()
+{
+    // Wait for possible ongoing DMA to complete
+    while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+        ;
+
+    CC2538_RF_CSP_ISFLUSHRX();
+    CC2538_RF_CSP_ISRXON();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////

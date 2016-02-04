@@ -262,19 +262,15 @@ def program():
                                     count = 1
 
                                 receivedCount = (ord(word[4]) << 8) + ord(word[5])
-                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])) + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
-                                if count != receivedCount:
-                                    # TODO: Replace skipping one packet by only skipping when packet CRC is incorrect
-                                    if faultyPacketIgnored or ((count - 1000 < receivedCount) and (receivedCount < count + 1000)):
-                                        print("ERROR: Packet lost! " + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
-                                        quit()
-                                    else:
-                                        faultyPacketIgnored = True
-                                        print("WARNING: faulty packet assumed: " + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
-                                else:
-                                    faultyPacketIgnored = False
-                                    #ser.write(encode('ACK' + word[0] + word[1]))
-                                    #tun_interface.inject(word)
+                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])) + ' ' + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
+                                # Ignore the count in the packet when the CRC was wrong
+                                if ord(word[-1]) & 128 == 0:
+                                    print("WARNING: invalid radio CRC in packet " + str(totalCount))
+                                elif count != receivedCount:
+                                    print("ERROR: Packet lost!")
+                                    return False
+
+                                #tun_interface.inject(word)
 
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
@@ -289,7 +285,6 @@ def program():
                                 unackedByteCount = 0
                                 ser.write(encode('ACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
                                                        + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
-
                         else:
                             print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
                                           + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
@@ -318,8 +313,9 @@ def main():
             try:
                 program()
             except (KeyboardInterrupt):
-                print('sending STOP')
-                ser.write(encode('STOP'))
+                pass
+            ser.write(encode('STOP'))
+
     except (KeyboardInterrupt):
         pass
     finally:
