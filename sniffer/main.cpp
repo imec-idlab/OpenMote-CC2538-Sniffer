@@ -3,11 +3,12 @@
 #include "Uart.h"
 #include "udma.h"
 #include "uart.h"
+#include "interrupt.h"
 #include "hw_ints.h"
 #include "hw_rfcore_sfr.h"
 #include "hw_rfcore_xreg.h"
-#include "interrupt.h"
 #include "hw_udma.h"
+#include "hw_udmachctl.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -31,8 +32,6 @@
 
 #define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
 #define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
-
-#define CC2538_RF_CONF_RX_DMA_CHAN  3
 
 #define BUFFER_LEN              8500
 #define UART_RX_BUFFER_LEN      128
@@ -95,7 +94,7 @@ static const uint16_t lut[256] = {
     0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
 };
 
-static volatile tDMAControlTable channelConfigUDMA __attribute__((section(".udma_channel_control_table")));
+static volatile tDMAControlTable uDMAChannelControlTable __attribute__((section(".udma_channel_control_table")));
 
 static PlainCallback uartRxCallback(&uartByteReceived);
 
@@ -128,14 +127,6 @@ int main()
     // Create the sole task
     xTaskCreate(serialTask, "Serial", 128, NULL, tskIDLE_PRIORITY+1, NULL);
 
-    // Initialize uDMA
-    uDMAEnable();
-    uDMAControlBaseSet((void*)&channelConfigUDMA);
-    uDMAChannelAttributeEnable(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
-    uDMAChannelControlSet(CC2538_RF_CONF_RX_DMA_CHAN, UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_128);
-    uDMAIntRegister(UDMA_INT_SW, &uDMATransferCompleted);
-    IntPrioritySet(UDMA_INT_SW, (5 << 5)); // Most important interrupt of all
-
     // Enable the UART peripheral
     uart.enable(460800, UART_CONFIG, UART_INT_MODE);
     uart.setRxCallback(&uartRxCallback);
@@ -150,6 +141,15 @@ int main()
     HWREG(RFCORE_XREG_RFERRM) = RFCORE_XREG_RFERRM_RFERRM_M; // Enable RF error interrupts (TODO: Look into those errors)
     IntRegister(INT_RFCORERTX, radioInterruptHandler);
     IntPrioritySet(INT_RFCORERTX, (6 << 5)); // More important than UART interrupt
+
+    // Initialize uDMA
+    uDMAEnable();
+    uDMAControlBaseSet((void*)&uDMAChannelControlTable);
+    uDMAChannelAttributeEnable(0, UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
+    uDMAChannelControlSet(0, UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_128);
+    uDMAChannelControlTable.pvSrcEndAddr = (void*)RFCORE_SFR_RFDATA;
+    uDMAIntRegister(UDMA_INT_SW, &uDMATransferCompleted);
+    IntPrioritySet(UDMA_INT_SW, (5 << 5)); // Most important interrupt of all
 
     // Set up interrupts and call our serial task
     led_green.on();
@@ -208,7 +208,7 @@ static void radioInterruptHandler()
         uint8_t fullPacketLength = packetLength + 5; // Packet including FCS plus extra bytes that we store
 
         // Wait for possible ongoing DMA to complete
-        while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+        while (HWREG(UDMA_ENASET))
             ;
 
         // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
@@ -235,13 +235,11 @@ static void radioInterruptHandler()
         // Copy the RX buffer to our buffer with Direct Memory Access
         fullPacketLengthCopy = fullPacketLength;
         uint16_t bufferIndexRadioCopy = bufferIndexRadio;
-        uDMAChannelTransferSet(CC2538_RF_CONF_RX_DMA_CHAN,
-                               UDMA_MODE_AUTO,
-                               (void*)RFCORE_SFR_RFDATA,
-                               &buffer[bufferIndexRadio+5],
-                               packetLength);
-        uDMAChannelEnable(CC2538_RF_CONF_RX_DMA_CHAN);
-        uDMAChannelRequest(CC2538_RF_CONF_RX_DMA_CHAN);
+        uDMAChannelControlTable.pvDstEndAddr = (void*)&buffer[bufferIndexRadio + 5 + packetLength - 1];
+        uDMAChannelControlTable.ui32Control &= ~(UDMACHCTL_CHCTL_XFERSIZE_M);
+        uDMAChannelControlTable.ui32Control |= UDMA_MODE_AUTO | ((packetLength - 1) << 4);
+        HWREG(UDMA_ENASET) = 1; // uDMAChannelEnable
+        HWREG(UDMA_SWREQ) = 1; // uDMAChannelRequest
 
         // Increment sequence number but skip the zero after using the highest number
         if (++seqNr == 0)
@@ -271,7 +269,7 @@ static void radioInterruptHandler()
 static void flushRadioRX()
 {
     // Wait for possible ongoing DMA to complete
-    while (uDMAChannelIsEnabled(CC2538_RF_CONF_RX_DMA_CHAN))
+    while (HWREG(UDMA_ENASET))
         ;
 
     CC2538_RF_CSP_ISFLUSHRX();
