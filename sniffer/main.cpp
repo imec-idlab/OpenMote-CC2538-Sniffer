@@ -487,6 +487,8 @@ static void serialReceive(uint8_t byte)
     {
         bufferIndexSerialSend = bufferIndexAcked;
         receivingStatus = false;
+        messageLen = 0;
+        return;
     }
 
     // Put the byte in the receive buffer

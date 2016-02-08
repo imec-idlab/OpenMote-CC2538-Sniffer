@@ -129,8 +129,8 @@ def pickSerialPort():
         print("No serial ports found!")
         return None
     elif len(ports) == 1:
-        print("Using serial port '" + str(port) + "'")
-        return port
+        print("Using serial port '" + str(ports[0]) + "'")
+        return ports[0]
     else:
         ports = sorted(ports)
         while (True):
@@ -187,6 +187,7 @@ def encode(string):
     crc = calcCRC(string)
 
     byteArray = bytearray()
+    byteArray.append(HDLC_FLAG)
     for c in string:
         if ord(c) == HDLC_FLAG or ord(c) == HDLC_ESCAPE:
             byteArray.append(HDLC_ESCAPE)
@@ -208,7 +209,8 @@ def encode(string):
     else:
         byteArray.append(crcByte)
 
-    return chr(HDLC_FLAG) + str(byteArray) + chr(HDLC_FLAG)
+    byteArray.append(HDLC_FLAG)
+    return byteArray
 
 
 def pickRadioChannel():
@@ -216,7 +218,7 @@ def pickRadioChannel():
     channel = -1
     while channel < 11 or channel > 26:
         try:
-            channel = int(raw_input("Select the IEEE 802.15.4 channel number (11-26): "))
+            channel = int(input("Select the IEEE 802.15.4 channel number (11-26): "))
         except (KeyboardInterrupt):
             return False
         except:
@@ -247,12 +249,13 @@ def program():
         while time.time() - begin < 1:
             c = ser.read(1)
             if len(c) > 0:
+                c = bytearray(c)[0]
                 if not receiving:
-                    if c == chr(HDLC_FLAG):
+                    if c == HDLC_FLAG:
                         receiving = True
                         word = ''
                 else:
-                    if c == chr(HDLC_FLAG):
+                    if c == HDLC_FLAG:
                         if len(word) != 0:
                             receiving = False
                             word = decode(word, quiet=True)[0]
@@ -262,21 +265,22 @@ def program():
                                     expectedSeqNr = 1
                                     break
                     else:
-                        word += c
+                        word += chr(c)
 
     print('Connected to sniffer')
 
     while(True):
         c = ser.read(1)
         if len(c) > 0:
+            c = bytearray(c)[0]
             if not receiving:
-                if c == chr(HDLC_FLAG):
+                if c == HDLC_FLAG:
                     receiving = True
                     word = ''
                 else:
                     print('WARNING: byte dropped')
             else:
-                if c == chr(HDLC_FLAG):
+                if c == HDLC_FLAG:
                     if len(word) == 0:
                         print('WARNING: out of sync detected')
                     else:
@@ -328,7 +332,7 @@ def program():
                             ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
                                                     + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
                 else: # Not the closing byte
-                    word += c
+                    word += chr(c)
 
         else: # No character was read
             if receiving:
