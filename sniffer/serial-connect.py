@@ -3,10 +3,14 @@
 import serial
 import struct
 import os
+import sys
+import glob
 import fcntl
 import subprocess
 import time
+import platform
 
+"""
 class TunInterface():
     TUNSETIFF   = 0x400454ca
     TUNSETOWNER = TUNSETIFF + 2
@@ -59,7 +63,7 @@ class TunInterface():
         os.write(self.tun_if.fileno(), bytes(packet))
 
 #tun_interface = TunInterface('tun0')
-
+"""
 lut = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
     0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
@@ -100,7 +104,51 @@ HDLC_ESCAPE      = 0x7D
 HDLC_ESCAPE_MASK = 0x20
 
 channel = 26
+platform = platform.system()
 ser = serial.Serial()
+
+def pickSerialPort():
+    ports = []
+    if platform == 'Windows':
+        import _winreg as winreg
+        path = 'HARDWARE\\DEVICEMAP\\SERIALCOMM'
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+        for i in range(winreg.QueryInfoKey(key)[1]):
+            try:
+                val = winreg.EnumValue(key,i)
+                if val[0].find('VCP') > -1:
+                    ports.append(str(val[1]))
+            except:
+                pass
+    elif platform == 'Darwin':
+        ports = [port for port in glob.glob('/dev/tty.usbserial*')]
+    elif platform == 'Linux':
+        ports = [port for port in glob.glob('/dev/ttyUSB*')]
+
+    if len(ports) == 0:
+        print("No serial ports found!")
+        return None
+    elif len(ports) == 1:
+        print("Using serial port '" + str(port) + "'")
+        return port
+    else:
+        ports = sorted(ports)
+        while (True):
+            try:
+                print("Multiple serial ports were found:")
+                for i in range(len(ports)):
+                    print("- [" + str(i) + "] " + str(ports[i]))
+                selectedPort = int(input("Choose your serial port: "))
+                if selectedPort < 0 or selectedPort >= len(ports):
+                    print("Input number is outside bounds!")
+                    continue
+                else:
+                    return ports[selectedPort]
+            except (KeyboardInterrupt):
+                return None
+            except:
+                print("Input parameter is not a number!")
+                continue
 
 def calcCRC(string):
     crc = 0xFFFF
@@ -166,32 +214,18 @@ def encode(string):
 def pickRadioChannel():
     global channel
     channel = -1
-    while (channel != 0 and (channel < 11 or channel > 26)): 
+    while channel < 11 or channel > 26:
         try:
-            channel = int(raw_input("Select the IEEE 802.15.4 channel number (11-26, 0 = exit): "))
+            channel = int(raw_input("Select the IEEE 802.15.4 channel number (11-26): "))
         except (KeyboardInterrupt):
             return False
         except:
             pass
 
-    if (channel != 0):
-        print('Setting radio channel to ' + str(channel))
-        return True
-    else:
-        return False
+    print('Setting radio channel to ' + str(channel))
+    return True
 
 def program():
-    global ser
-    ser = serial.Serial(port     = '/dev/ttyUSB0',
-                        baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
-                        parity   = serial.PARITY_NONE,
-                        stopbits = serial.STOPBITS_ONE,
-                        bytesize = serial.EIGHTBITS,
-                        xonxoff  = False,
-                        rtscts   = False,
-                        dsrdtr   = False,
-                        timeout   = 0.25)
-
     word = ''
     count = 0
     totalCount = 0
@@ -201,6 +235,9 @@ def program():
     expectedSeqNr = 1
     receiving = False
     faultyPacketIgnored = False
+
+    ser.flushInput()
+    ser.flushOutput()
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     while lastSeqNr == -1:
@@ -306,6 +343,21 @@ def program():
     return False
 
 def main():
+    selectedPort = pickSerialPort()
+    if selectedPort == None:
+        return
+
+    global ser
+    ser = serial.Serial(port     = selectedPort,
+                        baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
+                        parity   = serial.PARITY_NONE,
+                        stopbits = serial.STOPBITS_ONE,
+                        bytesize = serial.EIGHTBITS,
+                        xonxoff  = False,
+                        rtscts   = False,
+                        dsrdtr   = False,
+                        timeout   = 0.25)
+
     try:
         #tun_interface.start()
 
