@@ -236,7 +236,7 @@ static void radioInterruptHandler()
         fullPacketLengthCopy = fullPacketLength;
         uint16_t bufferIndexRadioCopy = bufferIndexRadio;
         uDMAChannelControlTable.pvDstEndAddr = (void*)&buffer[bufferIndexRadio + 5 + packetLength - 1];
-        uDMAChannelControlTable.ui32Control &= ~(UDMACHCTL_CHCTL_XFERSIZE_M);
+        uDMAChannelControlTable.ui32Control &= ~(UDMACHCTL_CHCTL_XFERSIZE_M | UDMACHCTL_CHCTL_XFERMODE_M);
         uDMAChannelControlTable.ui32Control |= UDMA_MODE_AUTO | ((packetLength - 1) << 4);
         HWREG(UDMA_ENASET) = 1; // uDMAChannelEnable
         HWREG(UDMA_SWREQ) = 1; // uDMAChannelRequest
