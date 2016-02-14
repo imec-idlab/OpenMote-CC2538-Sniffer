@@ -10,7 +10,7 @@ import subprocess
 import time
 import platform
 
-"""
+
 class TunInterface():
     TUNSETIFF   = 0x400454ca
     TUNSETOWNER = TUNSETIFF + 2
@@ -28,10 +28,10 @@ class TunInterface():
         #logger.info("init: Opening the TUN device file on /dev/net/tun.")
         
         # Open TUN device file
-        self.tun_if = open('/dev/net/tun', 'r+b')
+        self.tun_if = open('/dev/net/tun', 'rb+', buffering=0)
 
         # Tell it we want a TUN device
-        ifr = struct.pack('16sH', self.tun_name, self.IFF_TUN | self.IFF_NO_PI)
+        ifr = struct.pack('16sH', self.tun_name, self.IFF_TAP | self.IFF_NO_PI)
 
         # Create TUN interface
         fcntl.ioctl(self.tun_if, self.TUNSETIFF, ifr)
@@ -60,10 +60,28 @@ class TunInterface():
         #logger.info("inject: Injecting a packet to the TUN interface.")
         
         # Write a packet to the TUN interface
-        os.write(self.tun_if.fileno(), bytes(packet))
+        data = bytearray()
+        data.append(0xFF)
+        data.append(0xFF)
+        data.append(0xFF)
+        data.append(0xFF)
+        data.append(0xFF)
+        data.append(0xFF)
+        data.append(0x01)
+        data.append(0x01)
+        data.append(0x01)
+        data.append(0x01)
+        data.append(0x01)
+        data.append(0x01)
+        data.append(0x80)
+        data.append(0x9A)
+        for c in packet:
+            data.append(ord(c))
 
-#tun_interface = TunInterface('tun0')
-"""
+        os.write(self.tun_if.fileno(), data)
+
+tun_interface = TunInterface(b'tun0')
+
 lut = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
     0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
@@ -311,7 +329,7 @@ def program():
                                     print("ERROR: Packet lost!")
                                     return False
 
-                                #tun_interface.inject(word)
+                                tun_interface.inject(word[4:])
 
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
@@ -363,7 +381,7 @@ def main():
                         timeout   = 0.25)
 
     try:
-        #tun_interface.start()
+        tun_interface.start()
 
         while pickRadioChannel():
             try:
@@ -375,7 +393,7 @@ def main():
     except (KeyboardInterrupt):
         pass
     finally:
-        #tun_interface.stop()
+        tun_interface.stop()
         pass
 
 if __name__ == "__main__":
