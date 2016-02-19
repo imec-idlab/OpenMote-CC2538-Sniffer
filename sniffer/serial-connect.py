@@ -9,7 +9,22 @@ import fcntl
 import subprocess
 import time
 import platform
+import array
 
+def calculateCRC(msg):
+    if len(msg) % 2 == 1:
+        msg.append(0)
+
+    s = 0
+    for i in range(0, len(msg), 2):
+        w = (msg[i] << 8) + msg[i+1]
+        s = ((s+w) & 0xffff) + ((s+w) >> 16)
+
+    s = ~s & 0xffff
+    if s == 0x0000:
+        s = 0xffff
+
+    return [s >> 8, s & 0xff]
 
 class TunInterface():
     TUNSETIFF   = 0x400454ca
@@ -19,68 +34,99 @@ class TunInterface():
     IFF_NO_PI   = 0x1000
     
     def __init__(self, tun_name = None):
-        #logger.info("init: Creating the TunInterface object.")
-        
-        # Save the TUN name
         self.tun_name = tun_name
-        
-        #try:
-        #logger.info("init: Opening the TUN device file on /dev/net/tun.")
-        
-        # Open TUN device file
         self.tun_if = open('/dev/net/tun', 'rb+', buffering=0)
-
-        # Tell it we want a TUN device
         ifr = struct.pack('16sH', self.tun_name, self.IFF_TAP | self.IFF_NO_PI)
-
-        # Create TUN interface
         fcntl.ioctl(self.tun_if, self.TUNSETIFF, ifr)
-
-        # Make the TUN interface be accessed by regular users
         fcntl.ioctl(self.tun_if, self.TUNSETOWNER, 1000)
-        #except:
-        #logger.error('init: Error while creating the TUN device file.')
-        #raise RuntimeError('Error while creating the TUN device file.')
-            
-        #logger.info("init: TunInterface object created.")
-    
+
     def start(self):
-        #logger.info("start: Starting the TUN interface.")
-        
-        # Bring TUN interface up
         subprocess.check_call(['ifconfig', self.tun_name, 'up'])
     
     def stop(self):
-        #logger.info("stop: Stopping the TUN interface.")
-        
-        # Bring TUN interface down
         subprocess.check_call(['ifconfig', self.tun_name, 'down'])
     
     def inject(self, packet):
-        #logger.info("inject: Injecting a packet to the TUN interface.")
-        
-        # Write a packet to the TUN interface
+        localhostIP = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+        TUNIP = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+
         data = bytearray()
-        data.append(0xFF)
-        data.append(0xFF)
-        data.append(0xFF)
-        data.append(0xFF)
-        data.append(0xFF)
-        data.append(0xFF)
-        data.append(0x01)
-        data.append(0x01)
-        data.append(0x01)
-        data.append(0x01)
-        data.append(0x01)
-        data.append(0x01)
-        data.append(0x80)
-        data.append(0x9A)
         for c in packet:
             data.append(ord(c))
 
-        os.write(self.tun_if.fileno(), data)
+        ###### START OPTION 1 (UDP encapsulation with ZEP header) #####
+        """
+        # TODO: Put correct values in ZEP headers (timestamp + LQI + seqNr + is RSSI allowed inside reserved?)
+        # Use ZEPv1 header for ACK and ZEPv2 header for data
+        if len(data) == 5 and (data[0] & 7) == 2:
+            zep = bytearray()
+            zep.extend([ord('E'), ord('X')])    # Protocol ID String
+            zep.extend([0x01])                  # Protocol Version
+            zep.extend([0x00])                  # Channel ID
+            zep.extend([0x00, 0x01])            # Device ID
+            zep.extend([0x00])                  # LQI/CRC mode
+            zep.extend([0xff])                  # LQI Value
+            zep.extend([0x00]*7)                # reserved
+            zep.extend([len(packet)])           # length
+            zep.extend(data)
+        else:
+            zep = bytearray()
+            zep.extend([ord('E'), ord('X')])    # Protocol ID String
+            zep.extend([0x02])                  # Protocol Version
+            zep.extend([0x01])                  # Type
+            zep.extend([0x00])                  # Channel ID
+            zep.extend([0x00, 0x01])            # Device ID
+            zep.extend([0x00])                  # LQI/CRC mode
+            zep.extend([0xff])                  # LQI Value
+            zep.extend([0x01]*8)                # timestamp
+            zep.extend([0x02]*4)                # sequence number
+            zep.extend([0x00]*10)               # reserved
+            zep.extend([len(packet)])           # length
+            zep.extend(data)
 
-tun_interface = TunInterface(b'tun0')
+        udp = bytearray()
+        udp.extend([0x00, 0x00]) # src port (unused)
+        udp.extend([0x45, 0x5a]) # dest port (17754)
+        udp.extend([(len(zep) + 8) >> 8, (len(zep) + 8) & 0xff]) # payload length
+        udp.extend([0x00, 0x00]) # Checksum, to be filled in later
+        udp.extend(zep)
+
+        # Calculate the UDP checksum
+        pseudo = bytearray()
+        pseudo.extend(localhostIP) # src address
+        pseudo.extend(TUNIP) # dest address
+        pseudo.extend([0, 0, (len(zep) + 8) >> 8, (len(zep) + 8) & 0xff])
+        pseudo.extend([0, 0, 0, 17]) # protocol = udp
+        pseudo.extend(udp)
+        udp[6:8] = calculateCRC(pseudo)
+
+        ip = bytearray()
+        ip.append(0x60) # v6 + traffic class (upper nybble)
+        ip.extend([0x00, 0x00, 0x00]) # traffic class (lower nybble) + flow label
+        ip.extend([len(udp) >> 8, len(udp) & 0xff]) # payload length
+        ip.append(17) # next header: UDP
+        ip.append(4) # hop limit
+        ip.extend(localhostIP) # src address
+        ip.extend(TUNIP) # dest address
+        ip.extend(udp)
+
+        mac = bytearray()
+        mac.extend([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        mac.extend([0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
+        mac.extend([0x86, 0xdd]) # Next layer is IPv6
+        mac.extend(ip)
+        """
+        ##### END OPTION 1 #####
+
+        ###### START OPTION 2 #####
+        mac = bytearray()
+        mac.extend([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        mac.extend([0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
+        mac.extend([0x80, 0x9A]) # Next layer is 802.15.4
+        mac.extend(data)
+        ###### END OPTION 2 #####
+
+        os.write(self.tun_if.fileno(), mac)
 
 lut = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
@@ -124,6 +170,7 @@ HDLC_ESCAPE_MASK = 0x20
 channel = 26
 platform = platform.system()
 ser = serial.Serial()
+tun_interface = None
 
 def pickSerialPort():
     ports = []
@@ -314,7 +361,7 @@ def program():
                                 expectedSeqNr += 1
                                 if expectedSeqNr == 65536:
                                     expectedSeqNr = 1
-
+                                """
                                 totalCount += 1
                                 count += 1
                                 if count == 60000:
@@ -328,6 +375,9 @@ def program():
                                 elif count != receivedCount:
                                     print("ERROR: Packet lost!")
                                     return False
+                                """
+
+                                # TODO: Does LQI value has to be adapted?
 
                                 tun_interface.inject(word[4:])
 
@@ -381,6 +431,8 @@ def main():
                         timeout   = 0.25)
 
     try:
+        global tun_interface
+        tun_interface = TunInterface(b'tun0')
         tun_interface.start()
 
         while pickRadioChannel():

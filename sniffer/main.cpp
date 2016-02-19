@@ -152,7 +152,6 @@ int main()
     IntPrioritySet(UDMA_INT_SW, (5 << 5)); // Most important interrupt of all
 
     // Set up interrupts and call our serial task
-    led_green.on();
     portDISABLE_INTERRUPTS();
     xPortStartScheduler();
 }
@@ -413,7 +412,7 @@ static void serialReceive(uint8_t byte)
                      && (message[2] == 'T'))
                     {
                         IntDisable(INT_RFCORERTX);
-                        led_green.off();
+                        led_green.on();
                         led_yellow.off();
                         led_orange.off();
                         led_red.off();
@@ -451,7 +450,8 @@ static void serialReceive(uint8_t byte)
                     {
                         IntDisable(INT_RFCORERTX);
                         CC2538_RF_CSP_ISFLUSHRX();
-                        led_green.on();
+                        led_green.off();
+                        led_yellow.off();
                     }
                     else // Invalid packet received, resend everything up to the last received ACK
                         bufferIndexSerialSend = bufferIndexAcked;
