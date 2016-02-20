@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import serial
 import struct
@@ -10,123 +10,7 @@ import subprocess
 import time
 import platform
 import array
-
-def calculateCRC(msg):
-    if len(msg) % 2 == 1:
-        msg.append(0)
-
-    s = 0
-    for i in range(0, len(msg), 2):
-        w = (msg[i] << 8) + msg[i+1]
-        s = ((s+w) & 0xffff) + ((s+w) >> 16)
-
-    s = ~s & 0xffff
-    if s == 0x0000:
-        s = 0xffff
-
-    return [s >> 8, s & 0xff]
-
-class TunInterface():
-    TUNSETIFF   = 0x400454ca
-    TUNSETOWNER = TUNSETIFF + 2
-    IFF_TUN     = 0x0001
-    IFF_TAP     = 0x0002
-    IFF_NO_PI   = 0x1000
-    
-    def __init__(self, tun_name = None):
-        self.tun_name = tun_name
-        self.tun_if = open('/dev/net/tun', 'rb+', buffering=0)
-        ifr = struct.pack('16sH', self.tun_name, self.IFF_TAP | self.IFF_NO_PI)
-        fcntl.ioctl(self.tun_if, self.TUNSETIFF, ifr)
-        fcntl.ioctl(self.tun_if, self.TUNSETOWNER, 1000)
-
-    def start(self):
-        subprocess.check_call(['ifconfig', self.tun_name, 'up'])
-    
-    def stop(self):
-        subprocess.check_call(['ifconfig', self.tun_name, 'down'])
-    
-    def inject(self, packet):
-        localhostIP = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
-        TUNIP = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
-
-        data = bytearray()
-        for c in packet:
-            data.append(ord(c))
-
-        ###### START OPTION 1 (UDP encapsulation with ZEP header) #####
-        """
-        # TODO: Put correct values in ZEP headers (timestamp + LQI + seqNr + is RSSI allowed inside reserved?)
-        # Use ZEPv1 header for ACK and ZEPv2 header for data
-        if len(data) == 5 and (data[0] & 7) == 2:
-            zep = bytearray()
-            zep.extend([ord('E'), ord('X')])    # Protocol ID String
-            zep.extend([0x01])                  # Protocol Version
-            zep.extend([0x00])                  # Channel ID
-            zep.extend([0x00, 0x01])            # Device ID
-            zep.extend([0x00])                  # LQI/CRC mode
-            zep.extend([0xff])                  # LQI Value
-            zep.extend([0x00]*7)                # reserved
-            zep.extend([len(packet)])           # length
-            zep.extend(data)
-        else:
-            zep = bytearray()
-            zep.extend([ord('E'), ord('X')])    # Protocol ID String
-            zep.extend([0x02])                  # Protocol Version
-            zep.extend([0x01])                  # Type
-            zep.extend([0x00])                  # Channel ID
-            zep.extend([0x00, 0x01])            # Device ID
-            zep.extend([0x00])                  # LQI/CRC mode
-            zep.extend([0xff])                  # LQI Value
-            zep.extend([0x01]*8)                # timestamp
-            zep.extend([0x02]*4)                # sequence number
-            zep.extend([0x00]*10)               # reserved
-            zep.extend([len(packet)])           # length
-            zep.extend(data)
-
-        udp = bytearray()
-        udp.extend([0x00, 0x00]) # src port (unused)
-        udp.extend([0x45, 0x5a]) # dest port (17754)
-        udp.extend([(len(zep) + 8) >> 8, (len(zep) + 8) & 0xff]) # payload length
-        udp.extend([0x00, 0x00]) # Checksum, to be filled in later
-        udp.extend(zep)
-
-        # Calculate the UDP checksum
-        pseudo = bytearray()
-        pseudo.extend(localhostIP) # src address
-        pseudo.extend(TUNIP) # dest address
-        pseudo.extend([0, 0, (len(zep) + 8) >> 8, (len(zep) + 8) & 0xff])
-        pseudo.extend([0, 0, 0, 17]) # protocol = udp
-        pseudo.extend(udp)
-        udp[6:8] = calculateCRC(pseudo)
-
-        ip = bytearray()
-        ip.append(0x60) # v6 + traffic class (upper nybble)
-        ip.extend([0x00, 0x00, 0x00]) # traffic class (lower nybble) + flow label
-        ip.extend([len(udp) >> 8, len(udp) & 0xff]) # payload length
-        ip.append(17) # next header: UDP
-        ip.append(4) # hop limit
-        ip.extend(localhostIP) # src address
-        ip.extend(TUNIP) # dest address
-        ip.extend(udp)
-
-        mac = bytearray()
-        mac.extend([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
-        mac.extend([0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
-        mac.extend([0x86, 0xdd]) # Next layer is IPv6
-        mac.extend(ip)
-        """
-        ##### END OPTION 1 #####
-
-        ###### START OPTION 2 #####
-        mac = bytearray()
-        mac.extend([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
-        mac.extend([0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
-        mac.extend([0x80, 0x9A]) # Next layer is 802.15.4
-        mac.extend(data)
-        ###### END OPTION 2 #####
-
-        os.write(self.tun_if.fileno(), mac)
+import subprocess
 
 lut = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
@@ -167,10 +51,9 @@ HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
 HDLC_ESCAPE_MASK = 0x20
 
-channel = 26
 platform = platform.system()
 ser = serial.Serial()
-tun_interface = None
+pipe = None
 
 def pickSerialPort():
     ports = []
@@ -189,6 +72,8 @@ def pickSerialPort():
         ports = [port for port in glob.glob('/dev/tty.usbserial*')]
     elif platform == 'Linux':
         ports = [port for port in glob.glob('/dev/ttyUSB*')]
+    else:
+        raise RuntimeError('Unsupported OS')
 
     if len(ports) == 0:
         print("No serial ports found!")
@@ -214,6 +99,29 @@ def pickSerialPort():
             except:
                 print("Input parameter is not a number!")
                 continue
+
+def createPipe(name):
+    if platform == 'Linux' or platform == 'Darwin':
+        if os.path.exists(name):
+            response = str(input('File ' + name + ' already exists. Delete it and continue? [y/N] '))
+            if response == 'y' or response == 'Y':
+                os.remove(name)
+            else:
+                quit()
+
+        os.mkfifo(name)
+    elif platform == 'Windows':
+        raise RuntimeError('Pipe is not yet implemented on windows')
+    else:
+        raise RuntimeError('Unsupported OS')
+
+def removePipe(name):
+    if platform == 'Linux' or platform == 'Darwin':
+        os.remove(name)
+    elif platform == 'Windows':
+        raise RuntimeError('Pipe is not yet implemented on windows')
+    else:
+        raise RuntimeError('Unsupported OS')
 
 def calcCRC(string):
     crc = 0xFFFF
@@ -279,20 +187,19 @@ def encode(string):
 
 
 def pickRadioChannel():
-    global channel
-    channel = -1
+    channel = 0
     while channel < 11 or channel > 26:
         try:
             channel = int(input("Select the IEEE 802.15.4 channel number (11-26): "))
         except (KeyboardInterrupt):
-            return False
+            return None
         except:
             pass
 
     print('Setting radio channel to ' + str(channel))
-    return True
+    return channel
 
-def program():
+def program(channel):
     word = ''
     count = 0
     totalCount = 0
@@ -308,7 +215,7 @@ def program():
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     while lastSeqNr == -1:
-        print('Connecting...')
+        print('Connecting to OpenMote...')
         ser.write(encode('RST' + chr(channel)))
         begin = time.time()
         while time.time() - begin < 1:
@@ -332,7 +239,7 @@ def program():
                     else:
                         word += chr(c)
 
-    print('Connected to sniffer')
+    print('Connected to OpenMote')
 
     while(True):
         c = ser.read(1)
@@ -349,6 +256,10 @@ def program():
                     if len(word) == 0:
                         print('WARNING: out of sync detected')
                     else:
+                        # Get the timestamp
+                        ts_sec = int(time.time())
+                        ts_usec = int((time.time() - ts_sec) * 1000000)
+
                         receiving = False
                         word = decode(word)[0]
                         if len(word) > 0:
@@ -377,13 +288,33 @@ def program():
                                     return False
                                 """
 
-                                # TODO: Does LQI value has to be adapted?
-
-                                tun_interface.inject(word[4:])
-
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
                                 lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
+
+                                # Convert the string to a bytearray to write it to the pipe
+                                packet = bytearray()
+                                for character in word[4:]:
+                                    packet.append(ord(character))
+
+                                # TODO: Does LQI value has to be adapted?
+
+                                # Write Record Header to pipe
+                                header = bytearray()
+                                header.append((ts_sec >> 24) & 0xff) # timestamp seconds
+                                header.append((ts_sec >> 16) & 0xff) # timestamp seconds
+                                header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
+                                header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
+                                header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
+                                header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
+                                header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
+                                header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
+                                header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
+                                header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
+                                pipe.write(header)
+
+                                # Write the packet to the pipe
+                                pipe.write(packet)
                             else:
                                 print('WARNING: Received packet with seqNr=' + str((ord(word[2]) << 8) + ord(word[3]))
                                       + ' while expecting packet with seqNr=' + str(expectedSeqNr))
@@ -415,11 +346,29 @@ def program():
     return False
 
 def main():
-    selectedPort = pickSerialPort()
-    if selectedPort == None:
-        return
+    # TODO Possible parameters
+    # -c    Channel to start listening on.
+    #       By default the sniffer will ask you to type the channel when starting.
+    # -s    Full name of serial port to use. On linux this is e.g. "/dev/ttyUSB0".
+    #       When not provided and multiple ports are available, sniffer will make you pick a port from a list.
+    # -x    Wireshark executable.
+    #       By default the sniffer will try to execute "wireshark" and ask for the correct name if it fails.
+    # -p    Name of the fifo pipe to create.
+    #       By default the pipe file is called "fifopipe".
+
+    channel = None
+    serialPortName = None
+    wiresharkExe = 'wireshark-gtk'
+    pipeName = 'fifopipe'
 
     global ser
+    global pipe
+
+    if serialPortName == None:
+        selectedPort = pickSerialPort()
+        if selectedPort == None:
+            return
+
     ser = serial.Serial(port     = selectedPort,
                         baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
                         parity   = serial.PARITY_NONE,
@@ -430,23 +379,54 @@ def main():
                         dsrdtr   = False,
                         timeout   = 0.25)
 
-    try:
-        global tun_interface
-        tun_interface = TunInterface(b'tun0')
-        tun_interface.start()
+    createPipe(pipeName)
 
-        while pickRadioChannel():
+    if channel == None:
+        channel = pickRadioChannel()
+        if channel == None:
+            removePipe(pipeName)
+            quit()
+
+    # TODO: Start wireshark here but then start a different script with root access that connects to the sniffer
+    #       Example code below restarts current script, sys.argv should of course be edited in our version
+    #args = ['sudo', sys.executable] + sys.argv + [os.environ]
+    #os.execlpe('sudo', *args)
+
+    # Start wireshark and wait until it is listening to our pipe
+    print('Starting wireshark...')
+    subprocess.Popen([wiresharkExe, '-k', '-i', pipeName])
+    print('Waiting for wireshark to be ready...')
+    pipe = open(pipeName, 'wb', buffering=0)
+    print('Connected to wireshark')
+
+    # Write the global header to the pipe
+    header = bytearray()
+    header.extend([0xa1, 0xb2, 0xc3, 0xd4])  # magic number
+    header.extend([0, 2]) # major version number
+    header.extend([0, 4]) # minor version number
+    header.extend([0]*4)  # GMT to local correction
+    header.extend([0]*4)  # accuracy of timestamps
+    header.extend([0, 0, 0xff, 0xff])  # max length of captured packets, in octets
+    header.extend([0, 0, 0, 195])  # 802.15.4 protocol
+    pipe.write(header)
+
+    try:
+        while True:
             try:
-                program()
+                program(channel)
             except (KeyboardInterrupt):
                 pass
             ser.write(encode('STOP'))
 
+            channel = pickRadioChannel()
+            if channel == None:
+                break
     except (KeyboardInterrupt):
         pass
-    finally:
-        tun_interface.stop()
-        pass
+
+    pipe.close()
+    removePipe(pipeName)
+
 
 if __name__ == "__main__":
     main()
