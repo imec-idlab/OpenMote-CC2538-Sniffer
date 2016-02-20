@@ -170,7 +170,6 @@ static void uartByteReceived()
 static void uDMATransferCompleted()
 {
     bufferIndexRadio += fullPacketLengthCopy;
-    fullPacketLengthCopy = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -563,15 +562,19 @@ static void serialSend()
 
 static void serialTask(void*)
 {
-    // Send the READY message
+    // Send the READY message (with seqNr = 0 which can't occur during sniffing)
     UARTCharPut(uart.getBase(), HDLC_FLAG);
+    UARTCharPut(uart.getBase(), 0);
+    UARTCharPut(uart.getBase(), 0);
+    UARTCharPut(uart.getBase(), 0);
+    UARTCharPut(uart.getBase(), 0);
     UARTCharPut(uart.getBase(), 'R');
     UARTCharPut(uart.getBase(), 'E');
     UARTCharPut(uart.getBase(), 'A');
     UARTCharPut(uart.getBase(), 'D');
     UARTCharPut(uart.getBase(), 'Y');
-    UARTCharPut(uart.getBase(), 141);
-    UARTCharPut(uart.getBase(), 58);
+    UARTCharPut(uart.getBase(), 128);
+    UARTCharPut(uart.getBase(), 8);
     UARTCharPut(uart.getBase(), HDLC_FLAG);
 
     // The first byte in the transmit buffer is always the HDLC_FLAG

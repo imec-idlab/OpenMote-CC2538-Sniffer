@@ -10,6 +10,7 @@ import subprocess
 import time
 import platform
 import array
+import signal
 import subprocess
 
 lut = [
@@ -143,7 +144,7 @@ def decode(msg, quiet=False):
             else:
                 string += c
 
-    if len(string) < 7:
+    if len(string) < 6:
         if not quiet:
             print("WARNING: Received string too short")
         return ('', 0)
@@ -236,6 +237,8 @@ def program(channel):
                                     lastSeqNr = 0
                                     expectedSeqNr = 1
                                     break
+                                elif len(word) == 9 and word[4:] == 'READY':
+                                    break
                     else:
                         word += chr(c)
 
@@ -263,9 +266,15 @@ def program(channel):
                         receiving = False
                         word = decode(word)[0]
                         if len(word) > 0:
-                            if word == 'READY':
-                                print('Sniffer reset detected, restarting')
-                                return True
+                            # Something is wrong when sequence number is 0
+                            if (ord(word[2]) << 8) + ord(word[3]) == 0:
+                                print(str(len(word)) + ' ' + word[4:])
+                                if len(word) == 9 and word[4:] == 'READY':
+                                    print('Sniffer reset detected, restarting')
+                                    return True
+                                else:
+                                    print('ERROR: invalid sequence number occured, restarting')
+                                    return True
 
                             # Ignore the packet if it had a wrong sequence number
                             if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
@@ -358,19 +367,24 @@ def main():
 
     channel = None
     serialPortName = None
-    wiresharkExe = 'wireshark-gtk'
+    wiresharkExe = 'wireshark'
     pipeName = 'fifopipe'
+
+    #TODO: Remove those TEMP settings
+    channel = 25
+    serialPortName = '/dev/ttyUSB0'
+    wiresharkExe = 'wireshark-gtk'
 
     global ser
     global pipe
 
     if serialPortName == None:
-        selectedPort = pickSerialPort()
-        if selectedPort == None:
+        serialPortName = pickSerialPort()
+        if serialPortName == None:
             return
 
-    ser = serial.Serial(port     = selectedPort,
-                        baudrate = 460800, # 2000000, # 921600, # 460800, # 115200
+    ser = serial.Serial(port     = serialPortName,
+                        baudrate = 460800,
                         parity   = serial.PARITY_NONE,
                         stopbits = serial.STOPBITS_ONE,
                         bytesize = serial.EIGHTBITS,
@@ -393,8 +407,9 @@ def main():
     #os.execlpe('sudo', *args)
 
     # Start wireshark and wait until it is listening to our pipe
+    # The preexec_fn is passed to avoid wireshark from being killed when ctrl+C is pressed
     print('Starting wireshark...')
-    subprocess.Popen([wiresharkExe, '-k', '-i', pipeName])
+    p = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName], preexec_fn = lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
     print('Waiting for wireshark to be ready...')
     pipe = open(pipeName, 'wb', buffering=0)
     print('Connected to wireshark')
