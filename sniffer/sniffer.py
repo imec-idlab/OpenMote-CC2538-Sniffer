@@ -12,6 +12,22 @@ import platform
 import array
 import signal
 import subprocess
+import getopt
+import threading
+
+platform = platform.system()
+stopSniffingThread = False
+ser = serial.Serial()
+pipe = None
+
+HDLC_FLAG        = 0x7E
+HDLC_ESCAPE      = 0x7D
+HDLC_ESCAPE_MASK = 0x20
+
+if (sys.version_info > (3, 0)):
+    INPUT = input
+else:
+    INPUT = raw_input
 
 lut = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
@@ -48,14 +64,6 @@ lut = [
     0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
 ]
 
-HDLC_FLAG        = 0x7E
-HDLC_ESCAPE      = 0x7D
-HDLC_ESCAPE_MASK = 0x20
-
-platform = platform.system()
-ser = serial.Serial()
-pipe = None
-
 def pickSerialPort():
     ports = []
     if platform == 'Windows':
@@ -89,7 +97,7 @@ def pickSerialPort():
                 print("Multiple serial ports were found:")
                 for i in range(len(ports)):
                     print("- [" + str(i) + "] " + str(ports[i]))
-                selectedPort = int(input("Choose your serial port: "))
+                selectedPort = int(INPUT("Choose your serial port: "))
                 if selectedPort < 0 or selectedPort >= len(ports):
                     print("Input number is outside bounds!")
                     continue
@@ -101,10 +109,29 @@ def pickSerialPort():
                 print("Input parameter is not a number!")
                 continue
 
+
+def pickRadioChannel():
+    channel = 1
+    while (channel < 11 or channel > 26) and channel != 0:
+        try:
+            channel = int(INPUT("Select the IEEE 802.15.4 channel number (11-26, 0 to exit): "))
+        except (KeyboardInterrupt):
+            print('')
+            return None
+        except:
+            pass
+
+    if channel == 0:
+        return None
+    else:
+        print('Setting radio channel to ' + str(channel))
+        return channel
+
+
 def createPipe(name):
     if platform == 'Linux' or platform == 'Darwin':
         if os.path.exists(name):
-            response = str(input('File ' + name + ' already exists. Delete it and continue? [y/N] '))
+            response = str(INPUT('File ' + name + ' already exists. Delete it and continue? [y/N] '))
             if response == 'y' or response == 'Y':
                 os.remove(name)
             else:
@@ -116,6 +143,7 @@ def createPipe(name):
     else:
         raise RuntimeError('Unsupported OS')
 
+
 def removePipe(name):
     if platform == 'Linux' or platform == 'Darwin':
         os.remove(name)
@@ -123,6 +151,7 @@ def removePipe(name):
         raise RuntimeError('Pipe is not yet implemented on windows')
     else:
         raise RuntimeError('Unsupported OS')
+
 
 def calcCRC(string):
     crc = 0xFFFF
@@ -187,35 +216,14 @@ def encode(string):
     return byteArray
 
 
-def pickRadioChannel():
-    channel = 0
-    while channel < 11 or channel > 26:
-        try:
-            channel = int(input("Select the IEEE 802.15.4 channel number (11-26): "))
-        except (KeyboardInterrupt):
-            return None
-        except:
-            pass
-
-    print('Setting radio channel to ' + str(channel))
-    return channel
-
-def program(channel):
-    word = ''
-    count = 0
-    totalCount = 0
-    unackedByteCount = 0
-    lastIndex = 0
-    lastSeqNr = -1
-    expectedSeqNr = 1
-    receiving = False
-    faultyPacketIgnored = False
-
+def connectToOpenMote(channel):
     ser.flushInput()
     ser.flushOutput()
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
-    while lastSeqNr == -1:
+    connected = False
+    receiving = False
+    for i in range(3):
         print('Connecting to OpenMote...')
         ser.write(encode('RST' + chr(channel)))
         begin = time.time()
@@ -234,17 +242,34 @@ def program(channel):
                             word = decode(word, quiet=True)[0]
                             if len(word) > 0:
                                 if word == 'READY':
-                                    lastSeqNr = 0
-                                    expectedSeqNr = 1
+                                    connected = True
                                     break
                                 elif len(word) == 9 and word[4:] == 'READY':
-                                    break
+                                    connectToOpenMote(channel)
+                                    return
                     else:
                         word += chr(c)
+        if connected:
+            break
+    else:
+        print('ERROR: Failed to connect to OpenMote')
+        sys.exit(1)
 
     print('Connected to OpenMote')
 
-    while(True):
+
+def actual_sniffer(channel):
+    word = ''
+    count = 0
+    totalCount = 0
+    unackedByteCount = 0
+    lastIndex = 0
+    lastSeqNr = 0
+    expectedSeqNr = 1
+    receiving = False
+    faultyPacketIgnored = False
+
+    while not stopSniffingThread:
         c = ser.read(1)
         if len(c) > 0:
             c = bytearray(c)[0]
@@ -268,13 +293,14 @@ def program(channel):
                         if len(word) > 0:
                             # Something is wrong when sequence number is 0
                             if (ord(word[2]) << 8) + ord(word[3]) == 0:
-                                print(str(len(word)) + ' ' + word[4:])
                                 if len(word) == 9 and word[4:] == 'READY':
                                     print('Sniffer reset detected, restarting')
-                                    return True
                                 else:
                                     print('ERROR: invalid sequence number occured, restarting')
-                                    return True
+
+                                connectToOpenMote(channel)
+                                actual_sniffer(channel)
+                                return
 
                             # Ignore the packet if it had a wrong sequence number
                             if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
@@ -296,7 +322,6 @@ def program(channel):
                                     print("ERROR: Packet lost!")
                                     return False
                                 """
-
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
                                 lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
@@ -351,97 +376,151 @@ def program(channel):
                 ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
                                         + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
 
-    # The program has ended and does not require a restart
-    return False
 
-def main():
-    # TODO Possible parameters
-    # -c    Channel to start listening on.
-    #       By default the sniffer will ask you to type the channel when starting.
-    # -s    Full name of serial port to use. On linux this is e.g. "/dev/ttyUSB0".
-    #       When not provided and multiple ports are available, sniffer will make you pick a port from a list.
-    # -x    Wireshark executable.
-    #       By default the sniffer will try to execute "wireshark" and ask for the correct name if it fails.
-    # -p    Name of the fifo pipe to create.
-    #       By default the pipe file is called "fifopipe".
+def main(argv):
+    global ser
+    global pipe
+    global stopSniffingThread
 
     channel = None
     serialPortName = None
-    wiresharkExe = 'wireshark'
     pipeName = 'fifopipe'
+    wiresharkExe = 'wireshark'
+    wiresharkPID = None
 
-    #TODO: Remove those TEMP settings
-    channel = 25
-    serialPortName = '/dev/ttyUSB0'
-    wiresharkExe = 'wireshark-gtk'
+    # Parse parameters
+    # -c    Channel to start listening on.
+    #       By default the sniffer will ask you to type the channel when starting.
+    # -p    Full name of serial port to use. On linux this is e.g. "/dev/ttyUSB0".
+    #       When not provided and multiple ports are available, sniffer will make you pick a port from a list.
+    # -w    Wireshark executable.
+    #       By default the sniffer will try to execute "wireshark" and ask for the correct name if it fails.
+    # -f    Name of the fifo pipe to create.
+    #       By default the pipe file is called "fifopipe".
+    try:
+        opts, args = getopt.getopt(argv, "hc:p:w:f:",["help", "channel=", "port=", "wireshark=", "pipe=", "pid="])
+        if len(args) > 0:
+            raise getopt.GetoptError()
+    except getopt.GetoptError:
+        print('sniffer.py [-c <channel>] [-p <serial_port>] [-w <wireshark_executable>] [-f <pipe_file>]')
+        print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--wireshark=<executable>] [--pipe=<filename>]')
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            print('sniffer.py [-c <channel>] [-p <serial_port>] [-w <wireshark_executable>] [-f <pipe_file>]')
+            print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--wireshark=<executable>] [--pipe=<filename>]')
+            sys.exit()
+        elif opt in ("-c", "--channel"):
+            channel = int(arg)
+            if channel < 11 or channel > 26:
+                print('Channel should be between 11 and 26')
+                sys.exit(2)
+        elif opt in ("-p", "--port"):
+            serialPortName = arg
+        elif opt in ("-w", "--wireshark"):
+            wiresharkExe = arg
+        elif opt in ("-f", "--pipe"):
+            pipeName = arg
+        elif opt == "--pid":
+            wiresharkPID = arg
 
-    global ser
-    global pipe
-
+    # If no serial port was provided as parameter, find one now
     if serialPortName == None:
         serialPortName = pickSerialPort()
         if serialPortName == None:
             return
 
-    ser = serial.Serial(port     = serialPortName,
-                        baudrate = 460800,
-                        parity   = serial.PARITY_NONE,
-                        stopbits = serial.STOPBITS_ONE,
-                        bytesize = serial.EIGHTBITS,
-                        xonxoff  = False,
-                        rtscts   = False,
-                        dsrdtr   = False,
-                        timeout   = 0.25)
-
-    createPipe(pipeName)
-
+    # If no channel was provided as parameter, ask the user on which channel to listen
     if channel == None:
         channel = pickRadioChannel()
         if channel == None:
-            removePipe(pipeName)
-            quit()
+            sys.exit()
 
-    # TODO: Start wireshark here but then start a different script with root access that connects to the sniffer
-    #       Example code below restarts current script, sys.argv should of course be edited in our version
-    #args = ['sudo', sys.executable] + sys.argv + [os.environ]
-    #os.execlpe('sudo', *args)
+    # Start wireshark when needed
+    if wiresharkPID == None:
 
-    # Start wireshark and wait until it is listening to our pipe
-    # The preexec_fn is passed to avoid wireshark from being killed when ctrl+C is pressed
-    print('Starting wireshark...')
-    p = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName], preexec_fn = lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
-    print('Waiting for wireshark to be ready...')
-    pipe = open(pipeName, 'wb', buffering=0)
-    print('Connected to wireshark')
+        print('Creating pipe...')
+        createPipe(pipeName)
 
-    # Write the global header to the pipe
-    header = bytearray()
-    header.extend([0xa1, 0xb2, 0xc3, 0xd4])  # magic number
-    header.extend([0, 2]) # major version number
-    header.extend([0, 4]) # minor version number
-    header.extend([0]*4)  # GMT to local correction
-    header.extend([0]*4)  # accuracy of timestamps
-    header.extend([0, 0, 0xff, 0xff])  # max length of captured packets, in octets
-    header.extend([0, 0, 0, 195])  # 802.15.4 protocol
-    pipe.write(header)
+        # Let the user enter his password now to not block after already starting wireshark
+        print('Requesting root access...')
+        subprocess.call(['sudo', 'true'])
 
-    try:
+        print('Starting wireshark...')
         while True:
             try:
-                program(channel)
-            except (KeyboardInterrupt):
-                pass
-            ser.write(encode('STOP'))
-
-            channel = pickRadioChannel()
-            if channel == None:
+                wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName],
+                                                preexec_fn = lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)).pid
                 break
-    except (KeyboardInterrupt):
-        pass
+            except(FileNotFoundError):
+                print('ERROR: Failed to execute "' + wiresharkExe + '"')
+                wiresharkExe = str(INPUT('Please provide wireshark executable name: '))
 
-    pipe.close()
-    removePipe(pipeName)
+        # Rerun script with root access
+        args = ['sudo',
+                sys.executable,
+                sys.argv[0],
+                '--channel=' + str(channel),
+                '--port=' + str(serialPortName),
+                '--wireshark=' + str(wiresharkExe),
+                '--pipe=' + str(pipeName),
+                '--pid=' + str(wiresharkPID),
+                os.environ]
+        os.execlpe('sudo', *args)
+
+    else: # There is a wireshark instance so start the actual sniffer
+
+        ser = serial.Serial(port     = serialPortName,
+                            baudrate = 460800,
+                            parity   = serial.PARITY_NONE,
+                            stopbits = serial.STOPBITS_ONE,
+                            bytesize = serial.EIGHTBITS,
+                            xonxoff  = False,
+                            rtscts   = False,
+                            dsrdtr   = False,
+                            timeout   = 0.25)
+
+        if not os.path.exists(pipeName):
+            print('Creating pipe...')
+            createPipe(pipeName)
+
+        print('Waiting for wireshark to be ready...')
+        pipe = open(pipeName, 'wb', buffering=0)
+        print('Connected to wireshark')
+
+        # Write the global header to the pipe
+        header = bytearray()
+        header.extend([0xa1, 0xb2, 0xc3, 0xd4])  # magic number
+        header.extend([0, 2]) # major version number
+        header.extend([0, 4]) # minor version number
+        header.extend([0]*4)  # GMT to local correction
+        header.extend([0]*4)  # accuracy of timestamps
+        header.extend([0, 0, 0xff, 0xff])  # max length of captured packets, in octets
+        header.extend([0, 0, 0, 195])  # 802.15.4 protocol
+        pipe.write(header)
+
+        try:
+            while True:
+                connectToOpenMote(channel)
+
+                stopSniffingThread = False
+                sniffingThread = threading.Thread(target=actual_sniffer, args=[channel])
+                sniffingThread.start()
+
+                INPUT('Press return key to pause sniffer and choose a different channel\n')
+                stopSniffingThread = True
+                sniffingThread.join()
+                ser.write(encode('STOP'))
+
+                channel = pickRadioChannel()
+                if channel == None:
+                    break
+        except (KeyboardInterrupt):
+            pass
+
+        pipe.close()
+        removePipe(pipeName)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
