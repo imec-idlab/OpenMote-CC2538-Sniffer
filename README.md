@@ -38,6 +38,16 @@ sudo make bsl
 sudo python serial-connect.py
 ```
 
+## Windows latency issue
+When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under very high network load.
+1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
+2. Right click and select "Properties"
+3. Select the "Port Settings" tab
+4. Click the "Advanced" button at the bottom
+5. Change the Latency Timer (msec) to 1 (or the lowest possible setting)
+6. Change the USB Transfer Sizes to 64 (or the lowest possible settings)
+7. Save and close
+
 ## Current modules
 - sniffer  
     The actual sniffer program
