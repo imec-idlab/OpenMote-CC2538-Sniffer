@@ -1,45 +1,45 @@
 # IEEE 802.15.4 Sniffer for OpenMote-CC2538
 
-This project provides a lossless sniffer for the IEEE 802.15.4 network which can be run on the [OpenMote-CC2538](http://www.openmote.com/hardware/openmote-cc2538-en.html) hardware.
+This project provides a **lossless** sniffer for the IEEE 802.15.4 network which can be run on the [OpenMote-CC2538](http://www.openmote.com/hardware/openmote-cc2538-en.html) hardware. You also need the [OpenBase](http://www.openmote.com/hardware/openbase.html) to connect the OpenMote to your computer.
 
-## Setup
-Download the source code and recursively update the submodules:
+The captured packets can be monitored **real-time** in Wireshark.
+
+The program that runs on the computer side is **cross-platform** and has been tested on Windows, Linux and Mac OS X.
+
+## Installing dependencies
+The software that runs on the computer uses python, so if you are a windows user you must first install this if you haven't already. The code has been written to be compatible with both python 2 and 3, so which version you have doesn't really matter.
+
+One dependency that you will have to install is [pySerial](https://pypi.python.org/pypi/pyserial). It can easily be installed through pip or with easy_install or you can just manually download it and run the setup.
+
+Windows users must also install [pywin32](https://sourceforge.net/projects/pywin32/files/pywin32/).
+
+## Preparing the sniffer
+To use it for the first time you must of course flash the program to the OpenMote. To do this, connect the OpenBase and run the following command:
 ``` bash
-git clone https://bitbucket.org/texus/openmote-cc2538-802.15.4-sniffer
-git submodule update --init --recursive
+sudo python openmote-bsl.py OpenMoteSniffer.hex --board openbase
 ```
 
-A few small changes are required in the OpenMote firmware to make the sniffer work, you can apply them by executing the following:
+If you get the message "ERROR: Can't connect to target. Ensure boot loader is started." then you will have to enter the Bootloader Backdoor first. Try pressing the RESET button while the ON/SLEEP pin on the OpenBase is connected to GND.
+
+## Running the sniffer
+Now that the OpenMote should be running the sniffer, it is time to run a program on the computer that communicates with it over the USB cable (which is acting as a serial port).
+
+When not provided any parameters, the program will start interactively and will ask you to input the necessary information (e.g. the channel to capture on).
 ``` bash
-patch -p0 < bsl-patch.diff
+python sniffer.py
 ```
 
-Finally generate the libcc2538.a file:
+The optional parameters can be passed to make the sniffer start immediately. The -h or --help options will display which parameters are available.
 ``` bash
-cd OpenMoteFirmware/platform/cc2538/libcc2538
-python libcc2538.py
-ls .. | grep libcc2538.a
+python sniffer.py -c 25 -p /dev/ttyUSB0 -w wireshark-gtk
 ```
 
-The third command should have printed "libcc2538.a" which means that the file was successfully generated. If it doesn't print anything then something went wrong in the python script. Open libcc2538.py with a text editor and remove the "stderr=devnull" parameter that you find somewhere in it. Now run the python script again and fix the errors that you receive.
+When the sniffer starts, it will immediately start wireshark and the capturing will begin. To change the channel afterwards, just press the return key in the terminal where your python script is running. This will pause the sniffer and let you input a new channel number.
 
-
-## Compiling and programming sniffer
-Make sure the [OpenBase](http://www.openmote.com/hardware/openbase.html) is connected.
-
-Run the following commands (from the sniffer directory) to compile the code and then program it to the connected OpenMote:
-``` bash
-make
-sudo make bsl
-```
-
-## Running
-``` bash
-sudo python serial-connect.py
-```
+If wireshark is saying that the FCS field in the packets are incorrect then right click on the FCS and select Protocol Prefrences > TI CC24xx FCS format. The checksum should now be correctly parsed in all packets.
 
 ## Windows latency issue
-When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under very high network load.
+When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under high network load.
 1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
 2. Right click and select "Properties"
 3. Select the "Port Settings" tab
@@ -48,8 +48,5 @@ When running the sniffer on Windows, a small change is required in the settings 
 6. Change the USB Transfer Sizes to 64 (or the lowest possible settings)
 7. Save and close
 
-## Current modules
-- sniffer  
-    The actual sniffer program
-- custom-TX  
-    Transmits packets with various lengths as fast as possible
+## Leds and buttons on OpenMote
+TODO: Short description about what the leds mean and what happens when the RESET or USER button is pressed
