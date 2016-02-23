@@ -2,7 +2,7 @@
 
 This project provides a **lossless** sniffer for the IEEE 802.15.4 network which can be run on the [OpenMote-CC2538](http://www.openmote.com/hardware/openmote-cc2538-en.html) hardware. You also need the [OpenBase](http://www.openmote.com/hardware/openbase.html) to connect the OpenMote to your computer.
 
-The captured packets can be monitored **real-time** in Wireshark.
+The captured packets can either be monitored **real-time** in Wireshark or be written to a pcap file.
 
 The program that runs on the computer side is **cross-platform** and has been tested on Windows, Linux and Mac OS X.
 
@@ -40,15 +40,17 @@ If wireshark is saying that the FCS field in the packets are incorrect then righ
 
 ## Potential issues
 
-### Permission denied: '/dev/ttyUSBX'
+### Linux: Permission denied: '/dev/ttyUSBX'
 In order to use the sniffer you need to be able to write data to the serial USB port.
 
-One way to do this is to run the script with root access (using 'sudo') but a more permanent and better solution is to give your user permission to access the port. Add your user to the group that grants you this permission ('dialout' on Ubuntu, 'uucp' on Arch Linux).
+One way to do this is to run the script with root access (using 'sudo') but a more permanent and better solution is to give your user permission to access the port. Add your user to the group that grants you this permission ('dialout' on Ubuntu, 'uucp' on Arch Linux) and log out afterwards to allow the changes to take effect.
 ``` bash
 sudo gpasswd -a $USER dialout
 ```
 
-### Windows latency issue
+Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a few seconds and try again.
+
+### Windows: latency issue
 When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under high network load.
 1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
 2. Right click and select "Properties"
