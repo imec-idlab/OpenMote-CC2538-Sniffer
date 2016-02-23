@@ -38,7 +38,17 @@ When the sniffer starts, it will immediately start wireshark and the capturing w
 
 If wireshark is saying that the FCS field in the packets are incorrect then right click on the FCS and select Protocol Prefrences > TI CC24xx FCS format. The checksum should now be correctly parsed in all packets.
 
-## Windows latency issue
+## Potential issues
+
+### Permission denied: '/dev/ttyUSBX'
+In order to use the sniffer you need to be able to write data to the serial USB port.
+
+One way to do this is to run the script with root access (using 'sudo') but a more permanent and better solution is to give your user permission to access the port. Add your user to the group that grants you this permission ('dialout' on Ubuntu, 'uucp' on Arch Linux).
+``` bash
+sudo gpasswd -a $USER dialout
+```
+
+### Windows latency issue
 When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under high network load.
 1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
 2. Right click and select "Properties"
