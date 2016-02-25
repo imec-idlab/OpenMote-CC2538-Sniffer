@@ -406,7 +406,7 @@ static void serialReceive(uint8_t byte)
                             bufferIndexSerialSend = bufferIndexRadio;
                         }
                     }
-                    else if ((messageLen == 4)
+                    else if ((messageLen == 5)
                      && (message[0] == 'R')
                      && (message[1] == 'S')
                      && (message[2] == 'T'))
@@ -425,6 +425,12 @@ static void serialReceive(uint8_t byte)
 
                         // Set the requested channel
                         radio.setChannel(message[3]);
+
+                        // Enable frame filtering if requested
+                        if (message[4] == '1')
+                            HWREG(RFCORE_XREG_FRMFILT0) |= RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
+                        else
+                            HWREG(RFCORE_XREG_FRMFILT0) &= ~RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
 
                         // Send the READY message
                         UARTCharPut(uart.getBase(), HDLC_FLAG);

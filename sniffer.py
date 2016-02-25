@@ -39,7 +39,7 @@ HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
 HDLC_ESCAPE_MASK = 0x20
 
-lut = [
+precompiled_crc16_table = [
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
     0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
     0x1081, 0x0108, 0x3393, 0x221A, 0x56A5, 0x472C, 0x75B7, 0x643E,
@@ -165,10 +165,19 @@ def removePipe(name):
         output.close()
 
 
+def calcRadioCRC(string):
+    crc = 0x0000
+    for val in string:
+        crc = precompiled_crc16_table[(crc ^ val) & 0xff] ^ (crc >> 8)
+    return crc
+    crc ^= 0xFFFF
+    return crc ^ 0xffff;
+
+
 def calcCRC(string):
     crc = 0xFFFF
     for c in string:
-        crc = lut[ord(c) ^ ((crc >> 8) & 0xFF)] ^ ((crc << 8) & 0xFFFF)
+        crc = precompiled_crc16_table[ord(c) ^ ((crc >> 8) & 0xFF)] ^ ((crc << 8) & 0xFFFF)
     return crc;
 
 
@@ -229,16 +238,21 @@ def encode(string):
     return byteArray
 
 
-def connectToOpenMote(channel):
+def connectToOpenMote(channel, frameFilteringLevel):
     ser.flushInput()
     ser.flushOutput()
+
+    if frameFilteringLevel == 3:
+        enableFrameFiltering = True
+    else:
+        enableFrameFiltering = False
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     connected = False
     receiving = False
     for i in range(3):
         print('Connecting to OpenMote...')
-        ser.write(encode('RST' + chr(channel)))
+        ser.write(encode('RST' + chr(channel) + chr(enableFrameFiltering + ord('0'))))
         begin = time.time()
         while time.time() - begin < 1:
             c = ser.read(1)
@@ -258,7 +272,7 @@ def connectToOpenMote(channel):
                                     connected = True
                                     break
                                 elif len(word) == 9 and word[4:] == 'READY':
-                                    connectToOpenMote(channel)
+                                    connectToOpenMote(channel, frameFilteringLevel)
                                     return
                     else:
                         word += chr(c)
@@ -271,7 +285,7 @@ def connectToOpenMote(channel):
     print('Connected to OpenMote')
 
 
-def actual_sniffer(channel):
+def actual_sniffer(channel, frameFilteringLevel):
     word = ''
     count = 0
     totalCount = 0
@@ -312,7 +326,7 @@ def actual_sniffer(channel):
                                 else:
                                     print('ERROR: invalid sequence number occured, restarting')
 
-                                connectToOpenMote(channel)
+                                connectToOpenMote(channel, frameFilteringLevel)
                                 actual_sniffer(channel)
                                 return
 
@@ -326,31 +340,41 @@ def actual_sniffer(channel):
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
                                 lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
 
-                                # Convert the string to a bytearray to write it to the pipe
-                                packet = bytearray()
-                                for character in word[4:]:
-                                    packet.append(ord(character))
+                                # When requested, only accept packets with a valid CRC
+                                if frameFilteringLevel != 1 or ord(word[-1]) & 128 == 1:
 
-                                # TODO: Does LQI value has to be adapted?
+                                    # TODO: Does LQI value has to be adapted?
+                                    # TODO: Do something with RSSI and LQI values
 
-                                # Write Record Header and the packet to pipe
-                                header = bytearray()
-                                header.append((ts_sec >> 24) & 0xff) # timestamp seconds
-                                header.append((ts_sec >> 16) & 0xff) # timestamp seconds
-                                header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
-                                header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
-                                header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
-                                header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
-                                header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
-                                header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
-                                header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
-                                header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
-                                if outputIsFile:
-                                    output.write(header)
-                                    output.write(packet)
-                                else:
-                                    win32file.WriteFile(output, header)
-                                    win32file.WriteFile(output, packet)
+                                    # Convert the string to a bytearray to write it to the pipe
+                                    packet = bytearray()
+                                    for character in word[4:-2]:
+                                        packet.append(ord(character))
+
+                                    # Recalculate CRC if it was correct
+                                    if ord(word[-1]) & 128 != 0:
+                                        crc = calcRadioCRC(packet)
+                                        packet.append(crc & 0xff)
+                                        packet.append(crc >> 8)
+
+                                    # Write Record Header and the packet to pipe
+                                    header = bytearray()
+                                    header.append((ts_sec >> 24) & 0xff) # timestamp seconds
+                                    header.append((ts_sec >> 16) & 0xff) # timestamp seconds
+                                    header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
+                                    header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
+                                    header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
+                                    header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
+                                    header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
+                                    header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
+                                    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
+                                    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
+                                    if outputIsFile:
+                                        output.write(header)
+                                        output.write(packet)
+                                    else:
+                                        win32file.WriteFile(output, header)
+                                        win32file.WriteFile(output, packet)
                             else:
                                 if receivedSeqNr > expectedSeqNr:
                                     print('WARNING: Received seqNr=' + str(receivedSeqNr)
@@ -396,30 +420,33 @@ def main():
     parser.add_argument('-t', '--pipe', dest='pipe_name', default='fifopipe',
                         help='Name of the temporary pipe to wireshark (when not capturing to file)')
     parser.add_argument('-o', '--output', dest='pcap_file',
-                        help='Filename of .pcap file to output. This existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file.')
+                        help='Filename of .pcap file to output. The existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file.')
     parser.add_argument('-f', '--force', action='store_true',
                         help='Overwrite pcap file or pipe when it already exists')
+    parser.add_argument('--discard-bad-crc', action='store_true',
+                        help='Discard packets with a wrong CRC')
+    parser.add_argument('--enable-frame-filtering', action='store_true',
+                        help='Discard packets that do not satisfy the third-level filtering requirements as specified in the IEEE 802.15.4 standard. To only apply first level filtering, use the --discard-bad-crc option')
     args = parser.parse_args()
 
-    channel = args.channel
-    serialPortName = args.port
-    pipeName = args.pipe_name
-    wiresharkExe = args.wireshark_executable
-    outputFilename = args.pcap_file
-    force = args.force
+    frameFilteringLevel = 0
+    if args.discard_bad_crc:
+        frameFilteringLevel = 1
+    if args.enable_frame_filtering:
+        frameFilteringLevel = 3
 
-    if channel != None and (channel < 11 or channel > 26):
+    if args.channel != None and (args.channel < 11 or args.channel > 26):
         print('Channel should be between 11 and 26')
         sys.exit(2)
 
     # If no serial port was provided as parameter, find one now
-    if serialPortName == None:
-        serialPortName = pickSerialPort()
-        if serialPortName == None:
+    if args.port == None:
+        args.port = pickSerialPort()
+        if args.port == None:
             return
 
     # Setup the serial connection
-    ser = serial.Serial(port     = serialPortName,
+    ser = serial.Serial(port     = args.port,
                         baudrate = 460800,
                         parity   = serial.PARITY_NONE,
                         stopbits = serial.STOPBITS_ONE,
@@ -430,31 +457,37 @@ def main():
                         timeout   = 0.25)
 
     # If no channel was provided as parameter, ask the user on which channel to listen
-    if channel == None:
-        channel = pickRadioChannel()
-        if channel == None:
+    if args.channel == None:
+        args.channel = pickRadioChannel()
+        if args.channel == None:
             sys.exit()
 
     # Start wireshark when needed
-    if outputFilename == None:
+    if args.pcap_file == None:
         print('Creating pipe...')
-        createPipe(pipeName, force)
+        createPipe(args.pipe_name, args.force)
 
         print('Starting wireshark...')
-        while True:
-            try:
-                if platform != 'Windows':
-                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName], preexec_fn=os.setsid).pid
-                else:
-                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', "\\\\.\\pipe\\" + pipeName], creationflags=DETACHED_PROCESS).pid
-                break
-            except(FileNotFoundError):
-                print('ERROR: Failed to execute "' + wiresharkExe + '"')
-                wiresharkExe = str(INPUT('Please provide wireshark executable name: '))
+        try:
+            while True:
+                try:
+                    if platform != 'Windows':
+                        wiresharkPID = subprocess.Popen([args.wireshark_executable, '-k', '-i', args.pipe_name],
+                                                        preexec_fn=os.setsid).pid
+                    else:
+                        wiresharkPID = subprocess.Popen([args.wireshark_executable, '-k', '-i', "\\\\.\\pipe\\" + args.pipe_name],
+                                                        creationflags=DETACHED_PROCESS).pid
+                    break
+                except(FileNotFoundError):
+                    print('ERROR: Failed to execute "' + args.wireshark_executable + '"')
+                    args.wireshark_executable = str(INPUT('Please provide wireshark executable name: '))
+        except (KeyboardInterrupt):
+            removePipe(args.pipe_name)
+            sys.exit()
 
         print('Waiting for wireshark to be ready...')
         if platform != 'Windows':
-            output = open(pipeName, 'wb', buffering=0)
+            output = open(args.pipe_name, 'wb', buffering=0)
             outputIsFile = True
         else:
             win32pipe.ConnectNamedPipe(output, None)
@@ -462,17 +495,17 @@ def main():
         print('Connected to wireshark')
 
     else: # Write data to pcap file instead of real-time monitoring with wireshark
-        if os.path.exists(outputFilename):
-            if not force:
-                response = str(INPUT('File ' + outputFilename + ' already exists. Delete it and continue? [y/N] '))
+        if os.path.exists(args.pcap_file):
+            if not args.force:
+                response = str(INPUT('File ' + args.pcap_file + ' already exists. Delete it and continue? [y/N] '))
                 if response == 'y' or response == 'Y':
-                    os.remove(outputFilename)
+                    os.remove(args.pcap_file)
                 else:
                     sys.exit()
             else:
-                os.remove(outputFilename)
+                os.remove(args.pcap_file)
 
-        output = open(outputFilename, 'wb')
+        output = open(args.pcap_file, 'wb')
         outputIsFile = True
 
     # Write the global header to the output
@@ -491,10 +524,10 @@ def main():
 
     try:
         while True:
-            connectToOpenMote(channel)
+            connectToOpenMote(args.channel, frameFilteringLevel)
 
             stopSniffingThread = False
-            sniffingThread = threading.Thread(target=actual_sniffer, args=[channel])
+            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, frameFilteringLevel])
             sniffingThread.start()
 
             INPUT('Press return key to pause sniffer and choose a different channel\n')
@@ -502,10 +535,10 @@ def main():
             sniffingThread.join()
             ser.write(encode('STOP'))
 
-            channel = pickRadioChannel()
-            if channel == None:
+            args.channel = pickRadioChannel()
+            if args.channel == None:
                 break
-    except (KeyboardInterrupt):
+    except:
         pass
 
     if outputIsFile:
@@ -513,8 +546,8 @@ def main():
     else:
         win32pipe.DisconnectNamedPipe(pipe)
 
-    if outputFilename == None:
-        removePipe(pipeName)
+    if args.pcap_file == None:
+        removePipe(args.pipe_name)
 
 
 if __name__ == "__main__":

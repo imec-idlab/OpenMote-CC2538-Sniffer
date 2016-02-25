@@ -4,7 +4,7 @@ This project provides a **lossless** sniffer for the IEEE 802.15.4 network which
 
 The captured packets can either be monitored **real-time** in Wireshark or be written to a pcap file.
 
-The program that runs on the computer side is **cross-platform** and has been tested on Windows, Linux and Mac OS X.
+The python script that runs on the computer side is **cross-platform** and has been tested on Windows, Linux and Mac OS X.
 
 ## Installing dependencies
 The software that runs on the computer uses python, so if you are a windows user you must first install this if you haven't already. The code has been written to be compatible with both python 2 and 3, so which version you have doesn't really matter.
