@@ -11,12 +11,15 @@ import platform
 import array
 import signal
 import subprocess
-import getopt
 import threading
+import argparse
 
 platform = platform.system()
 if platform != 'Windows' and platform != 'Linux' and platform != 'Darwin':
     raise RuntimeError('ERROR: Sniffer does not support platform "' + platform + '"')
+
+if platform == 'Windows':
+    from win32process import DETACHED_PROCESS
 
 if (sys.version_info > (3, 0)):
     INPUT = input
@@ -131,14 +134,17 @@ def pickRadioChannel():
         return channel
 
 
-def createPipe(name):
+def createPipe(name, force):
     if platform != 'Windows':
         if os.path.exists(name):
-            response = str(INPUT('File ' + name + ' already exists. Delete it and continue? [y/N] '))
-            if response == 'y' or response == 'Y':
-                os.remove(name)
+            if not force:
+                response = str(INPUT('File ' + name + ' already exists. Delete it and continue? [y/N] '))
+                if response == 'y' or response == 'Y':
+                    os.remove(name)
+                else:
+                    sys.exit()
             else:
-                sys.exit()
+                os.remove(name)
 
         os.mkfifo(name)
     else:
@@ -299,7 +305,8 @@ def actual_sniffer(channel):
                         word = decode(word)[0]
                         if len(word) > 0:
                             # Something is wrong when sequence number is 0
-                            if (ord(word[2]) << 8) + ord(word[3]) == 0:
+                            receivedSeqNr = (ord(word[2]) << 8) + ord(word[3])
+                            if receivedSeqNr == 0:
                                 if len(word) == 9 and word[4:] == 'READY':
                                     print('Sniffer reset detected, restarting')
                                 else:
@@ -314,21 +321,7 @@ def actual_sniffer(channel):
                                 expectedSeqNr += 1
                                 if expectedSeqNr == 65536:
                                     expectedSeqNr = 1
-                                """
-                                totalCount += 1
-                                count += 1
-                                if count == 60000:
-                                    count = 1
 
-                                receivedCount = (ord(word[4]) << 8) + ord(word[5])
-                                print(str(totalCount) + ' ' + str(count) + ' ' + str(receivedCount) + ' ' + str(len(word)-6) + ' ' + str((ord(word[0]) << 8) + ord(word[1])) + ' ' + str((ord(word[2]) << 8) + ord(word[3])) + ' ' + str(ord(word[-2])) + ' ' + str(ord(word[-1])))
-                                # Ignore the count in the packet when the CRC was wrong
-                                if ord(word[-1]) & 128 == 0:
-                                    print("WARNING: invalid radio CRC in packet " + str(totalCount))
-                                elif count != receivedCount:
-                                    print("ERROR: Packet lost!")
-                                    return False
-                                """
                                 # Remember the index and sequence number of this packet in case the next one is corrupted
                                 lastIndex = (ord(word[0]) << 8) + ord(word[1])
                                 lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
@@ -359,8 +352,9 @@ def actual_sniffer(channel):
                                     win32file.WriteFile(output, header)
                                     win32file.WriteFile(output, packet)
                             else:
-                                print('WARNING: Received packet with seqNr=' + str((ord(word[2]) << 8) + ord(word[3]))
-                                      + ' while expecting packet with seqNr=' + str(expectedSeqNr))
+                                if receivedSeqNr > expectedSeqNr:
+                                    print('WARNING: Received seqNr=' + str(receivedSeqNr)
+                                        + ' higher than expecting seqNr=' + str(expectedSeqNr))
 
                             # Send an ACK after enough bytes have been received
                             unackedByteCount += len(word)
@@ -386,58 +380,37 @@ def actual_sniffer(channel):
                                         + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
 
 
-def main(argv):
+def main():
     global ser
     global output
     global outputIsFile
     global stopSniffingThread
 
-    channel = None
-    serialPortName = None
-    pipeName = 'fifopipe'
-    wiresharkExe = 'wireshark'
-    wiresharkPID = None
-    outputFilename = ''
+    parser = argparse.ArgumentParser(description='IEEE 802.15.4 Sniffer')
+    parser.add_argument('-c', '--channel', dest='channel', type=int,
+                        help='Channel on which the sniffer should start listening (11-26)')
+    parser.add_argument('-p', '--port', dest='port',
+                        help='Full name of serial port to use. On linux this is e.g. "/dev/ttyUSB0"')
+    parser.add_argument('-w', '--wireshark', dest='wireshark_executable', default='wireshark',
+                        help='Filename of the wireshark executable (if not just "wireshark" or capturing to file)')
+    parser.add_argument('-t', '--pipe', dest='pipe_name', default='fifopipe',
+                        help='Name of the temporary pipe to wireshark (when not capturing to file)')
+    parser.add_argument('-o', '--output', dest='pcap_file',
+                        help='Filename of .pcap file to output. This existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file.')
+    parser.add_argument('-f', '--force', action='store_true',
+                        help='Overwrite pcap file or pipe when it already exists')
+    args = parser.parse_args()
 
-    # Parse parameters
-    # -c    Channel to start listening on.
-    #       By default the sniffer will ask you to type the channel when starting.
-    # -p    Full name of serial port to use. On linux this is e.g. "/dev/ttyUSB0".
-    #       When not provided and multiple ports are available, sniffer will make you pick a port from a list.
-    # -w    Wireshark executable.
-    #       By default the sniffer will try to execute "wireshark" and ask for the correct name if it fails.
-    # -f    Name of the fifo pipe to create.
-    #       By default the pipe file is called "fifopipe".
-    try:
-        opts, args = getopt.getopt(argv, "hc:p:w:t:o:",["help", "channel=", "port=", "wireshark=", "pipe=", "output="])
-        if len(args) > 0:
-            raise getopt.GetoptError()
-    except getopt.GetoptError:
-        print('sniffer.py [-c <channel>] [-p <serial_port>] [-o <output_pcap_file>]')
-        print('sniffer.py [-c <channel>] [-p <serial_port>] [-w <wireshark_executable>] [-t <temp_pipe_file>]')
-        print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--output=<pcap_filename>]')
-        print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--wireshark=<executable>] [--pipe=<filename>]')
+    channel = args.channel
+    serialPortName = args.port
+    pipeName = args.pipe_name
+    wiresharkExe = args.wireshark_executable
+    outputFilename = args.pcap_file
+    force = args.force
+
+    if channel != None and (channel < 11 or channel > 26):
+        print('Channel should be between 11 and 26')
         sys.exit(2)
-    for opt, arg in opts:
-        if opt in ("-h", "--help"):
-            print('sniffer.py [-c <channel>] [-p <serial_port>] [-o <output_pcap_file>]')
-            print('sniffer.py [-c <channel>] [-p <serial_port>] [-w <wireshark_executable>] [-t <temp_pipe_file>]')
-            print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--output=<pcap_filename>]')
-            print('sniffer.py [--channel=<channel>] [--port=<serial_port>] [--wireshark=<executable>] [--pipe=<filename>]')
-            sys.exit()
-        elif opt in ("-c", "--channel"):
-            channel = int(arg)
-            if channel < 11 or channel > 26:
-                print('Channel should be between 11 and 26')
-                sys.exit(2)
-        elif opt in ("-p", "--port"):
-            serialPortName = arg
-        elif opt in ("-w", "--wireshark"):
-            wiresharkExe = arg
-        elif opt in ("-t", "--pipe"):
-            pipeName = arg
-        elif opt in ("-o", "--output"):
-            outputFilename = arg
 
     # If no serial port was provided as parameter, find one now
     if serialPortName == None:
@@ -463,22 +436,17 @@ def main(argv):
             sys.exit()
 
     # Start wireshark when needed
-    if len(outputFilename) == 0:
+    if outputFilename == None:
         print('Creating pipe...')
-        createPipe(pipeName)
+        createPipe(pipeName, force)
 
         print('Starting wireshark...')
         while True:
             try:
                 if platform != 'Windows':
-                    def disableInterrupts():
-                        signal.signal(signal.SIGINT, signal.SIG_IGN)
-                        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-                        signal.signal(signal.SIGQUIT, signal.SIG_IGN)
-
-                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName], preexec_fn = disableInterrupts).pid
+                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', pipeName], preexec_fn=os.setsid).pid
                 else:
-                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', "\\\\.\\pipe\\" + pipeName]).pid
+                    wiresharkPID = subprocess.Popen([wiresharkExe, '-k', '-i', "\\\\.\\pipe\\" + pipeName], creationflags=DETACHED_PROCESS).pid
                 break
             except(FileNotFoundError):
                 print('ERROR: Failed to execute "' + wiresharkExe + '"')
@@ -494,6 +462,16 @@ def main(argv):
         print('Connected to wireshark')
 
     else: # Write data to pcap file instead of real-time monitoring with wireshark
+        if os.path.exists(outputFilename):
+            if not force:
+                response = str(INPUT('File ' + outputFilename + ' already exists. Delete it and continue? [y/N] '))
+                if response == 'y' or response == 'Y':
+                    os.remove(outputFilename)
+                else:
+                    sys.exit()
+            else:
+                os.remove(outputFilename)
+
         output = open(outputFilename, 'wb')
         outputIsFile = True
 
@@ -509,7 +487,7 @@ def main(argv):
     if outputIsFile:
         output.write(header)
     else:
-        win32file.WriteFile(outputFilename, header)
+        win32file.WriteFile(output, header)
 
     try:
         while True:
@@ -535,9 +513,9 @@ def main(argv):
     else:
         win32pipe.DisconnectNamedPipe(pipe)
 
-    if len(outputFilename) == 0:
+    if outputFilename == None:
         removePipe(pipeName)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()
