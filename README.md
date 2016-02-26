@@ -3,15 +3,15 @@
 This project provides a sniffer for the IEEE 802.15.4 network which can be run on the [OpenMote-CC2538](http://www.openmote.com/hardware/openmote-cc2538-en.html) hardware.
 
 The sniffer is split in two components:
-- Peripheral: The OpenMote that will capture the network traffic
-- Host: This is the python script that runs on the PC
+* Peripheral: The OpenMote that will capture the network traffic
+* Host: This is the python script that runs on the PC
 
 Features:
-- The sniffer is **lossless**, all packets are captured (but frame filtering can be activated if wanted)
-- The captured packets can be monitored **real-time** in Wireshark (or can be written to a pcap file)
-- The sniffer is **cross-platform**, it will work on Windows, Linux and Mac OS X
-- You can either show the FCS or replace it with the RSSI, LQI and a FCS Valid bit
-- CRC checks and retransmissions are used on the serial connection to avoid possible corruption between the peripheral and host
+* The sniffer is **lossless**, all packets are captured (but frame filtering can be activated if wanted)
+* The captured packets can be monitored **real-time** in Wireshark (or can be written to a pcap file)
+* The sniffer is **cross-platform**, it will work on Windows, Linux and Mac OS X
+* You can either show the FCS or replace it with the RSSI, LQI and a FCS Valid bit
+* CRC checks and retransmissions are used on the serial connection to avoid possible corruption between the peripheral and host
 
 To flash the sniffer to the OpenMote, a script is provided which only works when the mote is connected through an [OpenBase](http://www.openmote.com/hardware/openbase.html). The sniffer itself should however work with anything as long as the OpenMote is recognised as a serial device.
 
