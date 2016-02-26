@@ -1,0 +1,29 @@
+language: c
+
+cache: apt
+
+env:
+    - NPROC_MAX=8
+
+before_install:
+    - sudo apt-get install emdebian-archive-keyring
+    - echo 'deb http://www.emdebian.org/debian wheezy main' | sudo tee /etc/apt/sources.list.d/emdebian.list > /dev/null
+
+    - echo 'deb http://us.archive.ubuntu.com/ubuntu trusty           main restricted universe multiverse' | sudo tee    /etc/apt/sources.list.d/trusty.list > /dev/null
+    - echo 'deb http://us.archive.ubuntu.com/ubuntu trusty-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/trusty.list > /dev/null
+    - echo 'deb http://us.archive.ubuntu.com/ubuntu trusty-security  main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/trusty.list > /dev/null
+    - echo 'deb http://us.archive.ubuntu.com/ubuntu trusty-updates   main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/trusty.list > /dev/null
+    - sudo add-apt-repository -y ppa:terry.guo/gcc-arm-embedded
+    - sudo apt-get update
+
+install:
+    - sudo apt-get install build-essential gcc-multilib gcc-arm-none-eabi g++-multilib libnewlib-dev libnewlib-arm-none-eabi
+    - wget http://mirrors.kernel.org/ubuntu/pool/universe/libs/libstdc++-arm-none-eabi/libstdc++-arm-none-eabi-newlib_4.8.3-11ubuntu1+4_all.deb
+    - sudo dpkg -i libstdc++-arm-none-eabi-newlib_4.8.3-11ubuntu1+4_all.deb
+
+script:
+    - cd test
+    - bash test-projects.sh
+
+notifications:
+    email: false

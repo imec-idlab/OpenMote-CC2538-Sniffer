@@ -1,0 +1,105 @@
+###############################################################################
+
+# Define the Platform path
+LIBCC2538_SRC = $(PLATFORM_SRC)/libcc2538/src
+LIBCC2538_INC = $(PLATFORM_SRC)/libcc2538/inc
+
+# Append to the include path
+INC_PATH += -I $(LIBCC2538_SRC)
+INC_PATH += -I $(LIBCC2538_INC)
+
+# Extend the virtual path
+VPATH += $(LIBCC2538_SRC) $(LIBCC2538_INC)
+
+# Include the Makefiles in the various subdirectories in the current folder
+# include $(LIBCC2538_SRC)/Makefile.include
+
+###############################################################################
+
+# Append to the files to compile
+SRC_FILES += Board.cpp InterruptHandler.cpp Gpio.cpp GpioAdc.cpp GpioIn.cpp \
+             GpioInPow.cpp GpioOut.cpp GpioUart.cpp GpioI2c.cpp GpioSpi.cpp \
+             Uart.cpp I2c.cpp Spi.cpp Timer.cpp GpioPwm.cpp Radio.cpp Watchdog.cpp \
+             SysTick.cpp SleepTimer.cpp RadioTimer.cpp
+
+# Append the startup code to the files to compile
+SRC_FILES += cc2538_startup.c
+
+# Linker script
+LINKER_SCRIPT = $(PLATFORM_SRC)/cc2538_linker.lds
+
+# Linker directories and libraries
+LINKER_DIRS += -L$(PLATFORM_SRC)
+LINKER_LIBS += -lcc2538
+
+###############################################################################
+
+LIBCC2538     = libcc2538.a
+
+# Check if TARGET points to a valid target
+ifeq "$(wildcard $(PLATFORM_SRC)/$(LIBCC2538))" ""
+$(error Error! $(LIBCC2538) does not exist.)
+endif
+
+###############################################################################
+
+# Check if BSL has been defined, if not give it a default value
+ifndef BSL
+BSL_BOARD = openbase
+else
+BSL_BOARD = $(BSL)
+endif
+
+###############################################################################
+
+# Configure the Segger J-Link
+JLINK_NAME = JLinkGDBServer
+JLINK_PATH = /opt/segger/JLink
+JLINK_OPT  = -device
+JLINK_DEV  = CC2538SF53
+
+# Configure the GDB client
+GDB_FILE  = cc2538_gdb.gdb
+GDB_BATCH = --batch 
+GDB_CMD   = --command
+GDB_EXT   = elf
+
+# Configure the GDB
+NEMIVER_NAME = nemiver
+NEMIVER_IP   = localhost:2331
+NEMIVER_GDB  = `which arm-none-eabi-gdb`
+NEMIVER_EXT  = elf
+
+# Configure the BSL client
+BSL_PYTHON = python
+BSL_NAME   = openmote-bsl.py
+BSL_PATH   = $(PROJECT_HOME)/tools/openmote-bsl
+BSL_OPT    = --board $(BSL_BOARD)
+BSL_EXT    = hex
+
+###############################################################################
+
+.PHONY: jlink load debug bsl
+
+jlink:
+	@echo "Initializing Segger J-Link..."
+	@$(JLINK_PATH)/$(JLINK_NAME) $(JLINK_OPT) $(JLINK_DEV)
+
+load:
+	@echo "Loading $(PROJECT_NAME) into target..."
+	@$(GDB) $(GDB_BATCH) $(GDB_CMD)=$(PLATFORM_SRC)/$(GDB_FILE) $(PROJECT_NAME).$(GDB_EXT)
+
+debug:
+	@echo "Debugging $(PROJECT_NAME) into target..."
+	@$(GDB) $(GDB_CMD)=$(PLATFORM_SRC)/$(GDB_FILE) $(PROJECT_NAME).$(GDB_EXT)
+
+nemiver: load
+	@echo "Launching debugger..."
+	@$(NEMIVER_NAME) --remote=$(NEMIVER_IP) --gdb-binary=$(NEMIVER_GDB) $(PROJECT_NAME).$(NEMIVER_EXT)
+
+bsl:
+	@echo "Loading $(PROJECT_NAME) into target..."
+	@$(BSL_PYTHON) $(BSL_PATH)/$(BSL_NAME) $(PROJECT_NAME).$(BSL_EXT) $(BSL_OPT)
+
+###############################################################################
+

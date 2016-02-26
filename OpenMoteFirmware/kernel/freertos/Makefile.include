@@ -1,0 +1,3 @@
+# Append to the files to compile
+SRC_FILES += croutine.c event_groups.c heap_2.c list.c port.c queue.c tasks.c timers.c
+

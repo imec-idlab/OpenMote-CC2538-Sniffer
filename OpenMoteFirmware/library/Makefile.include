@@ -1,0 +1,37 @@
+###############################################################################
+
+# Define the networking name and path
+ETHERNET_NAME = ethernet
+ETHERNET_PATH = $(LIBRARY_PATH)/$(ETHERNET_NAME)
+
+# Define the utils name and path
+UTILS_NAME = utils
+UTILS_PATH = $(LIBRARY_PATH)/$(UTILS_NAME)
+
+# Define the utils name and path
+IEEE802154_NAME = ieee802154
+IEEE802154_PATH = $(LIBRARY_PATH)/$(IEEE802154_NAME)
+
+###############################################################################
+
+# Append to the source and include paths
+INC_PATH += -I $(ETHERNET_PATH)
+INC_PATH += -I $(UTILS_PATH)
+INC_PATH += -I $(IEEE802154_PATH)
+
+###############################################################################
+
+# Extend the virtual path
+VPATH += $(ETHERNET_PATH)
+VPATH += $(UTILS_PATH)
+VPATH += $(IEEE802154_PATH)
+
+###############################################################################
+
+# Include the Makefiles in the various subdirectories in the current folder
+include $(ETHERNET_PATH)/Makefile.include
+include $(UTILS_PATH)/Makefile.include
+include $(IEEE802154_PATH)/Makefile.include
+
+###############################################################################
+

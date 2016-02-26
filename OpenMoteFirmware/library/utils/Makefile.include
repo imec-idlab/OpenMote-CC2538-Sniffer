@@ -1,0 +1,4 @@
+# Append to the files to compile
+SRC_FILES += CircularBuffer.cpp Crc16.cpp Hdlc.cpp Queue.cpp Serial.cpp \
+             CriticalSection.cpp Mutex.cpp MutexRecursive.cpp \
+             SemaphoreBinary.cpp SemaphoreCounting.cpp

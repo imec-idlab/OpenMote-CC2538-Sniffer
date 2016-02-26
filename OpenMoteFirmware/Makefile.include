@@ -1,0 +1,174 @@
+###############################################################################
+
+# Toolchain executables
+CC = arm-none-eabi-gcc
+CPP = arm-none-eabi-g++
+AS = arm-none-eabi-as
+LD = arm-none-eabi-ld
+GDB = arm-none-eabi-gdb
+OBJCOPY = arm-none-eabi-objcopy
+OBJSIZE = arm-none-eabi-size
+
+###############################################################################
+
+# C compiling flags
+CFLAGS += -mthumb -mcpu=cortex-m3 -mlittle-endian
+CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
+CFLAGS += -fshort-enums -fomit-frame-pointer
+CFLAGS += -std=c99
+CFLAGS += -Wall -pedantic -Wstrict-prototypes
+CFLAGS += -O0
+CFLAGS += -g -ggdb
+CFLAGS += $(DOPTIONS)
+
+# C++ compiling flags
+CPPFLAGS += -mthumb -mcpu=cortex-m3 -mlittle-endian
+CPPFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
+CPPFLAGS += -fshort-enums -fomit-frame-pointer
+CPPFLAGS += -fno-unwind-tables
+CPPFLAGS += -fno-exceptions
+CPPFLAGS += -fno-builtin
+CPPFLAGS += -fno-rtti
+CPPFLAGS += -std=c++11
+CPPFLAGS += -Wall -pedantic
+CPPFLAGS += -O0
+CPPFLAGS += -g -ggdb
+CPPFLAGS += $(DOPTIONS)
+
+# Linker flags
+LDFLAGS += -mthumb -mcpu=cortex-m3 -mlittle-endian
+LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -Wl,--defsym -Wl,__cxa_pure_virtual=0
+
+# Binary flags
+OBJCOPY_FLAGS += --gap-fill 0xFF
+OBJDUMP_FLAGS += --disassemble --source --disassembler-options=force-thumb
+
+# Makefile flags
+MAKEFLAGS = -j1
+
+###############################################################################
+
+#define the board subdirectory
+BOARD_NAME = board
+BOARD_PATH = $(PROJECT_HOME)/$(BOARD_NAME)
+
+# Define the drivers subdirectory
+DRIVERS_NAME = drivers
+DRIVERS_PATH = $(PROJECT_HOME)/$(DRIVERS_NAME)
+
+# Define the kernel subdirectory
+KERNEL_NAME = kernel
+KERNEL_PATH = $(PROJECT_HOME)/$(KERNEL_NAME)
+
+# Define the library subdirectory
+LIBRARY_NAME = library
+LIBRARY_PATH = $(PROJECT_HOME)/$(LIBRARY_NAME)
+
+# Define the platform subdirectory
+PLATFORM_NAME = platform
+PLATFORM_PATH = $(PROJECT_HOME)/$(PLATFORM_NAME)
+
+###############################################################################
+
+# Include the names of the source files to compile
+SRC_FILES += $(PROJECT_FILES)
+
+# Define the name and path where the temporary object files are stored
+BIN_PATH = bin
+
+# Coverts the source files (c and cpp) to object files (o) to be used as targets
+TMP_FILES += $(patsubst %.c, %.o, ${SRC_FILES})
+TMP_FILES += $(patsubst %.cpp, %.o, ${SRC_FILES})
+
+# Filters out the source files (c and cpp) from the object files (o) to be compiled
+BIN_FILES = $(filter-out %.c %.cpp %.h, $(TMP_FILES))
+
+# Adds the path to where the object files need to be stored
+BIN_TARGET = $(addprefix $(BIN_PATH)/, $(BIN_FILES))
+
+###############################################################################
+
+# Include the board makefiles
+ifeq ($(USE_BOARD), TRUE)
+    include $(BOARD_PATH)/Makefile.include
+    INC_PATH += -I $(BOARD_PATH)
+    VPATH += $(BOARD_PATH)
+endif
+
+# Include the drivers makefiles
+ifeq ($(USE_DRIVERS), TRUE)
+    include $(DRIVERS_PATH)/Makefile.include
+    INC_PATH += -I $(DRIVERS_PATH)
+    VPATH += $(DRIVERS_PATH)
+endif
+
+# Decide if we need to include the kernel makefile
+ifeq ($(USE_KERNEL), TRUE)
+    include $(KERNEL_PATH)/Makefile.include
+    INC_PATH += -I $(KERNEL_PATH)
+    VPATH += $(KERNEL_PATH)
+endif
+
+# Decide if we need to include the kernel makefile
+ifeq ($(USE_LIBRARY), TRUE)
+    include $(LIBRARY_PATH)/Makefile.include
+    INC_PATH += -I $(LIBRARY_PATH)
+    VPATH += $(LIBRARY_PATH)
+endif
+
+# Include the platform and library makefiles
+ifeq ($(USE_PLATFORM), TRUE)
+    include $(PLATFORM_PATH)/Makefile.include
+endif
+
+###############################################################################
+
+.DEFAULT_GOAL = all
+
+.PHONY: all
+all: pre build post stats
+
+pre:
+	@echo "Building '$(PROJECT_NAME)' project..."
+	@mkdir -p $(BIN_PATH)
+	
+build: $(BIN_TARGET)
+
+post: $(PROJECT_NAME).hex $(PROJECT_NAME).bin
+	@echo "Building '$(PROJECT_NAME)' done."
+    
+stats: $(PROJECT_NAME).elf
+	@-$(OBJSIZE) $(PROJECT_NAME).elf
+
+$(PROJECT_NAME).bin: $(PROJECT_NAME).elf
+	@-$(OBJCOPY) -O ihex $< $@
+
+$(PROJECT_NAME).hex: $(PROJECT_NAME).elf
+	@-$(OBJCOPY) -O binary $(OBJCOPY_FLAGS) $< $@
+
+$(PROJECT_NAME).elf: $(BIN_TARGET)
+	@echo "Linking '$(PROJECT_NAME)'..."
+	@-$(CPP) $(LDFLAGS) -T$(LINKER_SCRIPT) -o $@ $^ $(LINKER_DIRS) $(LINKER_LIBS)
+
+.PHONY: clean
+clean:
+	@echo "Cleaning '$(PROJECT_NAME)' project..."
+	@rm -f $(BIN_PATH)/*.*
+	@rm -f $(PROJECT_NAME)
+	@rm -f *.bin *.elf *.hex .map
+
+###############################################################################
+
+# Target to compile C files into object files
+$(BIN_PATH)/%.o: %.c
+	@echo "Compiling $<..."
+	@-$(CC) $(CFLAGS) $(INC_PATH) -c $< -o $@
+
+# Target to compile C++ files into object files
+$(BIN_PATH)/%.o: %.cpp
+	@echo "Compiling $<..."
+	@-$(CPP) $(CPPFLAGS) $(INC_PATH) -c $< -o $@
+
+###############################################################################
+

@@ -1,0 +1,8 @@
+bin/
+*~
+*.a
+*.bin
+*.elf
+*.hex
+*.log
+*.pyc

@@ -1,0 +1,13 @@
+###############################################################################
+
+# Append to the files to compile
+SRC_FILES += openmote-cc2538.cpp
+
+# Append to the include path
+INC_PATH += -I $(BOARD_PATH)
+
+# Extend the virtual path
+VPATH += $(BOARD_PATH)
+
+###############################################################################
+

@@ -1,0 +1,31 @@
+###############################################################################
+
+# Check if BOARD has been defined
+ifndef  BOARD
+$(error Error! Variable BOARD is not set.)
+endif
+
+# Check if BOARD points to a valid target
+ifeq "$(wildcard $(BOARD_PATH)/$(BOARD))" ""
+$(error Error! Variable BOARD is not valid.)
+endif
+
+###############################################################################
+
+# Define the Library path
+BOARD_SRC = $(BOARD_PATH)/$(BOARD)
+BOARD_INC = $(BOARD_PATH)/$(BOARD)
+
+# Append to the source and include paths
+INC_PATH += -I $(BOARD_SRC)
+INC_PATH += -I $(BOARD_INC)
+
+# Extend the virtual path
+VPATH += $(BOARD_SRC) $(BOARD_INC)
+
+###############################################################################
+
+# Include the Makefiles in the various subdirectories in the current folder
+include $(BOARD_SRC)/Makefile.include
+
+###############################################################################

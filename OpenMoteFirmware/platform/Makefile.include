@@ -1,0 +1,32 @@
+###############################################################################
+
+# Check if TARGET has been defined
+ifndef TARGET
+$(error Error! Variable TARGET is not set.)
+endif
+
+# Check if TARGET points to a valid target
+ifeq "$(wildcard $(PLATFORM_PATH)/$(TARGET))" ""
+$(error Error! Variable TARGET is not valid.)
+endif
+
+###############################################################################
+
+# Define the Library path
+PLATFORM_SRC = $(PLATFORM_PATH)/$(TARGET)
+PLATFORM_INC = $(PLATFORM_PATH)/inc
+
+# Append to the source and include paths
+INC_PATH += -I $(PLATFORM_SRC)
+INC_PATH += -I $(PLATFORM_INC)
+
+# Extend the virtual path
+VPATH += $(PLATFORM_SRC) $(PLATFORM_INC)
+
+###############################################################################
+
+# Include the Makefiles in the various subdirectories in the current folder
+include $(PLATFORM_SRC)/Makefile.include
+
+###############################################################################
+

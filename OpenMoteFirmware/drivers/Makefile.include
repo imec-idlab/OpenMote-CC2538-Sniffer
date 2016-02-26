@@ -1,0 +1,51 @@
+###############################################################################
+
+# Define the Sensors paths
+SENSORS_ADXL346  = $(DRIVERS_PATH)/adxl346
+SENSORS_MAX44009 = $(DRIVERS_PATH)/max44009
+SENSORS_SHT21    = $(DRIVERS_PATH)/sht21
+SENSORS_DIRS     = $(SENSORS_ADXL346) \
+                   $(SENSORS_MAX44009) \
+                   $(SENSORS_SHT21)
+
+###############################################################################
+
+# Define the ENC28J60 path
+CONNECTIVITY_ENC28J60 = $(DRIVERS_PATH)/enc28j60
+
+###############################################################################
+
+# Define the TPS62730 path
+POWER_TPS62730 = $(DRIVERS_PATH)/tps62730
+
+###############################################################################
+
+# Append to the source and include paths
+INC_PATH += -I $(DRIVERS_PATH)
+INC_PATH += -I $(SENSORS_ADXL346)
+INC_PATH += -I $(SENSORS_MAX44009)
+INC_PATH += -I $(SENSORS_SHT21)
+INC_PATH += -I $(CONNECTIVITY_ENC28J60)
+INC_PATH += -I $(POWER_TPS62730)
+
+###############################################################################
+
+# Extend the virtual path
+VPATH += $(DRIVERS_PATH) 
+VPATH += $(SENSORS_ADXL346)
+VPATH += $(SENSORS_MAX44009)
+VPATH += $(SENSORS_SHT21)
+VPATH += $(CONNECTIVITY_ENC28J60)
+VPATH += $(POWER_TPS62730)
+
+###############################################################################
+
+# Include the Makefiles in the various subdirectories in the current folder
+include $(SENSORS_ADXL346)/Makefile.include
+include $(SENSORS_MAX44009)/Makefile.include
+include $(SENSORS_SHT21)/Makefile.include
+include $(CONNECTIVITY_ENC28J60)/Makefile.include
+include $(POWER_TPS62730)/Makefile.include
+
+###############################################################################
+

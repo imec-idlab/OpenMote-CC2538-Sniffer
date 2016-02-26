@@ -1,0 +1,2 @@
+# Append to the files to compile
+SRC_FILES += Tps62730.cpp

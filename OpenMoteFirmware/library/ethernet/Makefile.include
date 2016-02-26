@@ -1,0 +1,2 @@
+# Append to the files to compile
+SRC_FILES += Ethernet.cpp EthernetDevice.cpp EthernetFrame.cpp

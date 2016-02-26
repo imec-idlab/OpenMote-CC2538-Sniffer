@@ -24,7 +24,9 @@ import time
 bsl_boards = ["openbase", "openrpi", "openusb"]
 
 # Define the relative path to the project home
-openmote_bsl_path = "OpenMoteFirmware/tools/openmote-bsl"
+openmote_bsl_path = "../../tools/openmote-bsl"
+if not os.path.isdir(openmote_bsl_path):
+    openmote_bsl_path = "../OpenMoteFirmware/tools/openmote-bsl"
 
 # Define logging file name, path and configuration
 log_name = "openmote-bsl.cfg"
@@ -40,18 +42,18 @@ cc2538_bsl_bin  = os.path.abspath(cc2538_bsl_path)
 
 class OpenBase():
     cc2538_bsl_params = ['-e', '-w', '-b', '115200']
-
+    
     def __init__(self):
         pass
-
+    
     def run(self, bsl_file = None):
         self.bsl_start()
         self.bsl_flash(bsl_file = bsl_file)
         self.bsl_stop()
-
+        
     def bsl_start(self):
         pass
-
+            
     def bsl_flash(self, bsl_file = None):
         script = [cc2538_bsl_bin] + self.cc2538_bsl_params + [bsl_file]
         process = subprocess.call(script, shell=False)
@@ -64,33 +66,33 @@ class OpenRPi():
         import RPi.GPIO as gpio
     except:
         logger.error("RPi.GPIO module not installed.")
-
+    
     cc2538_bsl_params = ['-e', '-w', '-b', '115200']
-
+    
     BSL   = 23
     RESET = 24
 
     HIGH = True
     LOW  = False
-
+    
     def __init__(self):
         gpio.setwarnings(False)
         gpio.setmode(gpio.BCM)
         gpio.setup(self.BSL, gpio.OUT)
         gpio.setup(self.RESET, gpio.OUT)
-
+    
     def run(self):
         self.bsl_start()
         self.bsl_flash()
         self.bsl_stop()
-
+        
     def bsl_start(self):
         gpio.output(self.RESET, self.HIGH)
         gpio.output(self.BSL,   self.HIGH)
         gpio.output(self.RESET, self.LOW)
         gpio.output(self.BSL,   self.LOW)
         gpio.output(self.RESET, self.HIGH)
-
+            
     def bsl_flash(self):
         script = [os.path.join(cc2538_bsl_path, cc2538_bsl_name), self.cc2538_bsl_params]
         process = subprocess.call(script, shell=False)
@@ -99,24 +101,24 @@ class OpenRPi():
         gpio.output(self.RESET, self.LOW)
         gpio.output(self.BSL,   self.HIGH)
         gpio.output(self.RESET, self.HIGH)
-
+            
 class OpenUsb():
     cc2538_bsl_params = ['-e', '-w', '-b', '115200', '--bsl']
-
+    
     High = True
     Low  = False
 
     def __init__(self):
         pass
-
+    
     def run(self, bsl_file = None):
         self.bsl_start()
         self.bsl_flash(bsl_file = bsl_file)
         self.bsl_stop()
-
+        
     def bsl_start(self):
         pass
-
+            
     def bsl_flash(self, bsl_file = None):
         script = [cc2538_bsl_bin] + self.cc2538_bsl_params + [bsl_file]
         process = subprocess.call(script, shell=False)
@@ -142,19 +144,19 @@ def parse_config(config = None, arguments = None):
                 config['bsl_board'] = value
         else:
             assert False, logger.error("Unhandled options while parsing the command line arguments.")
-
+       
     return config
 
 def main(argv):
     default_config = {
         'bsl_board' : 'none'
     }
-
+    
     # Parse the command line arguments
     bsl_file   = sys.argv[1]
     other_args = sys.argv[2:]
     config     = parse_config(default_config, other_args)
-
+    
     if config['bsl_board'] == "openbase":
         bsl = OpenBase()
     elif config['bsl_board'] == "openrpi":
@@ -163,7 +165,7 @@ def main(argv):
         bsl = OpenUsb()
     else:
         assert False, logger.error("Unknown board, please check the bsl_boards variable.")
-
+    
     bsl.run(bsl_file = bsl_file)
 
 if __name__ == "__main__":
