@@ -198,7 +198,6 @@ static void radioInterruptHandler()
          || (packetLength < CC2538_RF_MIN_PACKET_LEN)
          || (packetLength != HWREG(RFCORE_XREG_RXFIFOCNT)))
         {
-            // TODO: What to do with such packets where the packet length is wrong?
             flushRadioRX();
             return;
         }
