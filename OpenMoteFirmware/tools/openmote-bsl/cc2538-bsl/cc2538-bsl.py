@@ -49,6 +49,14 @@ import subprocess
 import struct
 import binascii
 
+import platform
+platform = platform.system()
+if platform == 'Windows':
+    if (sys.version_info > (3, 0)):
+        import winreg
+    else:
+        import _winreg as winreg
+
 #version
 VERSION_STRING = "1.1"
 
@@ -663,9 +671,19 @@ if __name__ == "__main__":
         if conf['port'] == 'auto':
             ports = []
 
-            # Get a list of all USB-like names in /dev
-            for name in ['tty.usbserial', 'ttyUSB', 'tty.usbmodem']:
-                ports.extend(glob.glob('/dev/%s*' % name))
+            # Get a list of all USB-like names
+            if platform == 'Windows':
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'HARDWARE\\DEVICEMAP\\SERIALCOMM')
+                for i in range(winreg.QueryInfoKey(key)[1]):
+                    try:
+                        val = winreg.EnumValue(key,i)
+                        if val[0].find('VCP') > -1:
+                            ports.append(str(val[1]))
+                    except:
+                        pass
+            else:
+                for name in ['tty.usbserial', 'ttyUSB', 'tty.usbmodem']:
+                    ports.extend(glob.glob('/dev/%s*' % name))
 
             ports = sorted(ports)
 

@@ -28,7 +28,7 @@ if (sys.version_info > (3, 0)):
 else:
     INPUT = raw_input
     if platform == 'Windows':
-        import _winreg
+        import _winreg as winreg
 
 stopSniffingThread = False
 ser = serial.Serial()

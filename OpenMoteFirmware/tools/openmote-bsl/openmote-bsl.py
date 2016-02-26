@@ -57,7 +57,7 @@ class OpenBase():
         pass
             
     def bsl_flash(self, bsl_file = None):
-        script = [cc2538_bsl_bin] + self.cc2538_bsl_params + [bsl_file]
+        script = [sys.executable, cc2538_bsl_bin] + self.cc2538_bsl_params + [bsl_file]
         process = subprocess.call(script, shell=False)
 
     def bsl_stop(self):
