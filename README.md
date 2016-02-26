@@ -48,7 +48,7 @@ One way to do this is to run the script with root access (using 'sudo') but a mo
 sudo gpasswd -a $USER dialout
 ```
 
-Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a few seconds and try again.
+Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a second and try again.
 
 ### Windows: latency issue
 When running the sniffer on Windows, a small change is required in the settings of the COM port to achieve maximum performance. Without the change the sniffer may not be able to capture all packets under high network load.

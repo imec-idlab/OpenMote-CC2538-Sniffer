@@ -34,6 +34,7 @@ stopSniffingThread = False
 ser = serial.Serial()
 output = None
 outputIsFile = True
+actualSnifferTerminated = False
 
 HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
@@ -109,7 +110,7 @@ def pickSerialPort():
                     continue
                 else:
                     return ports[selectedPort]
-            except (KeyboardInterrupt):
+            except KeyboardInterrupt:
                 return None
             except:
                 print("Input parameter is not a number!")
@@ -121,7 +122,7 @@ def pickRadioChannel():
     while (channel < 11 or channel > 26) and channel != 0:
         try:
             channel = int(INPUT("Select the IEEE 802.15.4 channel number (11-26, 0 to exit): "))
-        except (KeyboardInterrupt):
+        except KeyboardInterrupt:
             print('')
             return None
         except:
@@ -285,7 +286,9 @@ def connectToOpenMote(channel, frameFilteringLevel):
     print('Connected to OpenMote')
 
 
-def actual_sniffer(channel, frameFilteringLevel):
+def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
+    global actualSnifferTerminated
+
     word = ''
     count = 0
     totalCount = 0
@@ -296,112 +299,121 @@ def actual_sniffer(channel, frameFilteringLevel):
     receiving = False
     faultyPacketIgnored = False
 
-    while not stopSniffingThread:
-        c = ser.read(1)
-        if len(c) > 0:
-            c = bytearray(c)[0]
-            if not receiving:
-                if c == HDLC_FLAG:
-                    receiving = True
-                    word = ''
-                else:
-                    print('WARNING: byte dropped')
-            else:
-                if c == HDLC_FLAG:
-                    if len(word) == 0:
-                        print('WARNING: out of sync detected')
+    try:
+        while not stopSniffingThread:
+            c = ser.read(1)
+            if len(c) > 0:
+                c = bytearray(c)[0]
+                if not receiving:
+                    if c == HDLC_FLAG:
+                        receiving = True
+                        word = ''
                     else:
-                        # Get the timestamp
-                        ts_sec = int(time.time())
-                        ts_usec = int((time.time() - ts_sec) * 1000000)
-
-                        receiving = False
-                        word = decode(word)[0]
-                        if len(word) > 0:
-                            # Something is wrong when sequence number is 0
-                            receivedSeqNr = (ord(word[2]) << 8) + ord(word[3])
-                            if receivedSeqNr == 0:
-                                if len(word) == 9 and word[4:] == 'READY':
-                                    print('Sniffer reset detected, restarting')
-                                else:
-                                    print('ERROR: invalid sequence number occured, restarting')
-
-                                connectToOpenMote(channel, frameFilteringLevel)
-                                actual_sniffer(channel)
-                                return
-
-                            # Ignore the packet if it had a wrong sequence number
-                            if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
-                                expectedSeqNr += 1
-                                if expectedSeqNr == 65536:
-                                    expectedSeqNr = 1
-
-                                # Remember the index and sequence number of this packet in case the next one is corrupted
-                                lastIndex = (ord(word[0]) << 8) + ord(word[1])
-                                lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
-
-                                # When requested, only accept packets with a valid CRC
-                                if frameFilteringLevel != 1 or ord(word[-1]) & 128 == 1:
-
-                                    # TODO: Does LQI value has to be adapted?
-                                    # TODO: Do something with RSSI and LQI values
-
-                                    # Convert the string to a bytearray to write it to the pipe
-                                    packet = bytearray()
-                                    for character in word[4:-2]:
-                                        packet.append(ord(character))
-
-                                    # Recalculate CRC if it was correct
-                                    if ord(word[-1]) & 128 != 0:
-                                        crc = calcRadioCRC(packet)
-                                        packet.append(crc & 0xff)
-                                        packet.append(crc >> 8)
-
-                                    # Write Record Header and the packet to pipe
-                                    header = bytearray()
-                                    header.append((ts_sec >> 24) & 0xff) # timestamp seconds
-                                    header.append((ts_sec >> 16) & 0xff) # timestamp seconds
-                                    header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
-                                    header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
-                                    header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
-                                    header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
-                                    header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
-                                    header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
-                                    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
-                                    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
-                                    if outputIsFile:
-                                        output.write(header)
-                                        output.write(packet)
-                                    else:
-                                        win32file.WriteFile(output, header)
-                                        win32file.WriteFile(output, packet)
-                            else:
-                                if receivedSeqNr > expectedSeqNr:
-                                    print('WARNING: Received seqNr=' + str(receivedSeqNr)
-                                        + ' higher than expecting seqNr=' + str(expectedSeqNr))
-
-                            # Send an ACK after enough bytes have been received
-                            unackedByteCount += len(word)
-                            if unackedByteCount >= 250 and lastSeqNr != 0:
-                                unackedByteCount = 0
-                                ser.write(encode('ACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
-                                                       + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                        print('WARNING: byte dropped')
+                else:
+                    if c == HDLC_FLAG:
+                        if len(word) == 0:
+                            print('WARNING: out of sync detected')
                         else:
-                            print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                                          + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                            ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
-                                                    + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
-                else: # Not the closing byte
-                    word += chr(c)
+                            # Get the timestamp
+                            ts_sec = int(time.time())
+                            ts_usec = int((time.time() - ts_sec) * 1000000)
 
-        else: # No character was read
-            if receiving:
-                receiving = False
-                print('WARNING: expected another byte, assuming out of sync')
-                print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
-                                        + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                            receiving = False
+                            word = decode(word)[0]
+                            if len(word) > 0:
+                                # Something is wrong when sequence number is 0
+                                receivedSeqNr = (ord(word[2]) << 8) + ord(word[3])
+                                if receivedSeqNr == 0:
+                                    if len(word) == 9 and word[4:] == 'READY':
+                                        print('Sniffer reset detected, restarting')
+                                    else:
+                                        print('ERROR: invalid sequence number occured, restarting')
+
+                                    connectToOpenMote(channel, frameFilteringLevel, replaceFCS)
+                                    actual_sniffer(channel)
+                                    return
+
+                                # Ignore the packet if it had a wrong sequence number
+                                if expectedSeqNr == (ord(word[2]) << 8) + ord(word[3]):
+                                    expectedSeqNr += 1
+                                    if expectedSeqNr == 65536:
+                                        expectedSeqNr = 1
+
+                                    # Remember the index and sequence number of this packet in case the next one is corrupted
+                                    lastIndex = (ord(word[0]) << 8) + ord(word[1])
+                                    lastSeqNr = (ord(word[2]) << 8) + ord(word[3])
+
+                                    # When requested, only accept packets with a valid CRC
+                                    if frameFilteringLevel != 1 or ord(word[-1]) & 128 == 1:
+
+                                        # TODO: Does LQI value has to be adapted?
+
+                                        # Convert the string to a bytearray to write it to the pipe
+                                        packet = bytearray()
+                                        for character in word[4:-2]:
+                                            packet.append(ord(character))
+
+                                        # Recalculate CRC if it was correct and requested
+                                        if replaceFCS or ord(word[-1]) & 128 == 0:
+                                            packet.append(ord(word[-2]))
+                                            packet.append(ord(word[-1]))
+                                        else:
+                                            crc = calcRadioCRC(packet)
+                                            packet.append(crc & 0xff)
+                                            packet.append(crc >> 8)
+
+                                        # Write Record Header and the packet to pipe
+                                        header = bytearray()
+                                        header.append((ts_sec >> 24) & 0xff) # timestamp seconds
+                                        header.append((ts_sec >> 16) & 0xff) # timestamp seconds
+                                        header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
+                                        header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
+                                        header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
+                                        header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
+                                        header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
+                                        header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
+                                        header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
+                                        header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
+                                        if outputIsFile:
+                                            output.write(header)
+                                            output.write(packet)
+                                        else:
+                                            win32file.WriteFile(output, header)
+                                            win32file.WriteFile(output, packet)
+                                else:
+                                    if receivedSeqNr > expectedSeqNr:
+                                        print('WARNING: Received seqNr=' + str(receivedSeqNr)
+                                            + ' higher than expecting seqNr=' + str(expectedSeqNr))
+
+                                # Send an ACK after enough bytes have been received
+                                unackedByteCount += len(word)
+                                if unackedByteCount >= 250 and lastSeqNr != 0:
+                                    unackedByteCount = 0
+                                    ser.write(encode('ACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                                           + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                            else:
+                                print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
+                                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
+                                ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                                        + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+                    else: # Not the closing byte
+                        word += chr(c)
+
+            else: # No character was read
+                if receiving:
+                    receiving = False
+                    print('WARNING: expected another byte, assuming out of sync')
+                    print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
+                                  + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
+                    ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
+                                            + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
+    except BrokenPipeError:
+        actualSnifferTerminated = True
+        print('ERROR: Pipe to wireshark is broken')
+    except serial.serialutil.SerialException as e:
+        actualSnifferTerminated = True
+        print('ERROR: Serial error, assuming OpenMote disconnected')
 
 
 def main():
@@ -409,6 +421,7 @@ def main():
     global output
     global outputIsFile
     global stopSniffingThread
+    global actualSnifferTerminated
 
     parser = argparse.ArgumentParser(description='IEEE 802.15.4 Sniffer')
     parser.add_argument('-c', '--channel', dest='channel', type=int,
@@ -423,12 +436,15 @@ def main():
                         help='Filename of .pcap file to output. The existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file.')
     parser.add_argument('-f', '--force', action='store_true',
                         help='Overwrite pcap file or pipe when it already exists')
+    parser.add_argument('--replace-fcs', action='store_true',
+                        help='Replace the normal radio FCS by the TI CC24XX FCS which contains the RSSI and LQI.')
     parser.add_argument('--discard-bad-crc', action='store_true',
                         help='Discard packets with a wrong CRC')
     parser.add_argument('--enable-frame-filtering', action='store_true',
                         help='Discard packets that do not satisfy the third-level filtering requirements as specified in the IEEE 802.15.4 standard. To only apply first level filtering, use the --discard-bad-crc option')
     args = parser.parse_args()
 
+    wiresharkProcess = None
     frameFilteringLevel = 0
     if args.discard_bad_crc:
         frameFilteringLevel = 1
@@ -469,19 +485,24 @@ def main():
 
         print('Starting wireshark...')
         try:
+            nullOutput = open(os.devnull, 'w')
             while True:
                 try:
                     if platform != 'Windows':
-                        wiresharkPID = subprocess.Popen([args.wireshark_executable, '-k', '-i', args.pipe_name],
-                                                        preexec_fn=os.setsid).pid
+                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', args.pipe_name],
+                                                            stdout=nullOutput,
+                                                            stderr=nullOutput,
+                                                            preexec_fn=os.setsid)
                     else:
-                        wiresharkPID = subprocess.Popen([args.wireshark_executable, '-k', '-i', "\\\\.\\pipe\\" + args.pipe_name],
-                                                        creationflags=DETACHED_PROCESS).pid
+                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', "\\\\.\\pipe\\" + args.pipe_name],
+                                                            stdout=nullOutput,
+                                                            stderr=nullOutput,
+                                                            creationflags=DETACHED_PROCESS)
                     break
-                except(FileNotFoundError):
+                except FileNotFoundError:
                     print('ERROR: Failed to execute "' + args.wireshark_executable + '"')
                     args.wireshark_executable = str(INPUT('Please provide wireshark executable name: '))
-        except (KeyboardInterrupt):
+        except KeyboardInterrupt:
             removePipe(args.pipe_name)
             sys.exit()
 
@@ -522,32 +543,56 @@ def main():
     else:
         win32file.WriteFile(output, header)
 
+    def cleanup():
+        try:
+            ser.write(encode('STOP'))
+        except:
+            pass
+
+        if outputIsFile:
+            output.close()
+        else:
+            win32pipe.DisconnectNamedPipe(pipe)
+
+        if args.pcap_file == None:
+            removePipe(args.pipe_name)
+
     try:
         while True:
             connectToOpenMote(args.channel, frameFilteringLevel)
 
             stopSniffingThread = False
-            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, frameFilteringLevel])
+            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, frameFilteringLevel, args.replace_fcs])
             sniffingThread.start()
 
-            INPUT('Press return key to pause sniffer and choose a different channel\n')
+            INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
             stopSniffingThread = True
             sniffingThread.join()
-            ser.write(encode('STOP'))
+
+            if actualSnifferTerminated:
+                break
+
+            if wiresharkProcess != None:
+                if wiresharkProcess.poll() != None:
+                    print('ERROR: Wireshark no longer running')
+                    break
+
+            try:
+                ser.write(encode('STOP'))
+            except:
+                print('ERROR: Failed to inform OpenMote about sniffer being paused')
+                break
 
             args.channel = pickRadioChannel()
             if args.channel == None:
                 break
-    except:
+    except KeyboardInterrupt:
         pass
+    except:
+        cleanup()
+        raise
 
-    if outputIsFile:
-        output.close()
-    else:
-        win32pipe.DisconnectNamedPipe(pipe)
-
-    if args.pcap_file == None:
-        removePipe(args.pipe_name)
+    cleanup()
 
 
 if __name__ == "__main__":
