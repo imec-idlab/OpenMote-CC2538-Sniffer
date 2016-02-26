@@ -3,3 +3,4 @@ bin/
 *.bin
 *.hex
 *.elf
+!OpenMoteSniffer.hex
