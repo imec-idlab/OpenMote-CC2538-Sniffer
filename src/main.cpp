@@ -16,11 +16,11 @@
 #define HDLC_ESCAPE         0x7D
 #define HDLC_ESCAPE_MASK    0x20
 
-#define CC2538_RF_MIN_PACKET_LEN   ( 3 )
-#define CC2538_RF_MAX_PACKET_LEN   ( 127 )
-#define CC2538_RF_RSSI_OFFSET      ( 73 )
-#define CC2538_RF_CSP_OP_ISRXON     ( 0xE3 )
-#define CC2538_RF_CSP_OP_ISFLUSHRX  ( 0xED )
+#define CC2538_RF_MIN_PACKET_LEN    3
+#define CC2538_RF_MAX_PACKET_LEN    127
+#define CC2538_RF_RSSI_OFFSET       73
+#define CC2538_RF_CSP_OP_ISRXON     0xE3
+#define CC2538_RF_CSP_OP_ISFLUSHRX  0xED
 
 #define CC2538_RF_CSP_ISRXON()    \
   do { HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISRXON; } while(0)
@@ -29,9 +29,6 @@
   HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISFLUSHRX; \
   HWREG(RFCORE_SFR_RFST) = CC2538_RF_CSP_OP_ISFLUSHRX; \
 } while(0)
-
-#define UART_CONFIG         ( UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE )
-#define UART_INT_MODE       ( UART_TXINT_MODE_EOT )
 
 #define BUFFER_LEN              8500
 #define UART_RX_BUFFER_LEN      128
@@ -128,7 +125,7 @@ int main()
     xTaskCreate(serialTask, "Serial", 128, NULL, tskIDLE_PRIORITY+1, NULL);
 
     // Enable the UART peripheral
-    uart.enable(460800, UART_CONFIG, UART_INT_MODE);
+    uart.enable(460800, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
     uart.setRxCallback(&uartRxCallback);
     uart.enableInterrupts();
 
@@ -169,6 +166,8 @@ static void uartByteReceived()
 
 static void uDMATransferCompleted()
 {
+    uint8_t& rssi = buffer[bufferIndexRadio + fullPacketLengthCopy - 2];
+    rssi = ((int8_t)rssi) - CC2538_RF_RSSI_OFFSET;
     bufferIndexRadio += fullPacketLengthCopy;
 }
 

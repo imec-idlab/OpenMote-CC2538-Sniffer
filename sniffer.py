@@ -290,8 +290,6 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
     global actualSnifferTerminated
 
     word = ''
-    count = 0
-    totalCount = 0
     unackedByteCount = 0
     lastIndex = 0
     lastSeqNr = 0
@@ -330,7 +328,7 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                     else:
                                         print('ERROR: invalid sequence number occured, restarting')
 
-                                    connectToOpenMote(channel, frameFilteringLevel, replaceFCS)
+                                    connectToOpenMote(channel, frameFilteringLevel)
                                     actual_sniffer(channel)
                                     return
 
@@ -346,8 +344,6 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
 
                                     # When requested, only accept packets with a valid CRC
                                     if frameFilteringLevel != 1 or ord(word[-1]) & 128 == 1:
-
-                                        # TODO: Does LQI value has to be adapted?
 
                                         # Convert the string to a bytearray to write it to the pipe
                                         packet = bytearray()
