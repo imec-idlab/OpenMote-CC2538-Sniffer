@@ -329,7 +329,7 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                         print('ERROR: invalid sequence number occured, restarting')
 
                                     connectToOpenMote(channel, frameFilteringLevel)
-                                    actual_sniffer(channel)
+                                    actual_sniffer(channel, frameFilteringLevel, replaceFCS)
                                     return
 
                                 # Ignore the packet if it had a wrong sequence number
