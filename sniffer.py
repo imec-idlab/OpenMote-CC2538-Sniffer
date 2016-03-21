@@ -583,6 +583,8 @@ def main():
             if args.channel == None:
                 break
     except KeyboardInterrupt:
+        stopSniffingThread = True
+        sniffingThread.join()
         pass
     except:
         cleanup()
