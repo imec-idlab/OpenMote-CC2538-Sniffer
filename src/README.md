@@ -1,19 +1,16 @@
 ## Compiling the sniffer yourself
 ### Installing dependencies
-TODO: Mention the required steps to be able to compile the firmware
+You will need to install the toolchain for compiling C/C++ code for the ARM Cortex platform and the corresponding libstdc++ library. On Ubuntu 15.04 and higher (only tested on Ubuntu 15.10), you should be able to just run the following:
+``` bash
+sudo apt-get install gcc-arm-none-eabi
+```
+
+On older Ubuntu versions, the required packages were not available in the standard Ubuntu repositories and you would have to install the compiler and the correspinding libstdc++ library yourself from somewhere else.
+
+Other linux distros are of course also supported (tested on Arch Linux), but you will have to check for yourself which packages you need.
 
 ### Preparation
-If the OpenMoteFirmware folder is still empty then you should recursively update that submodule.
-``` bash
-git submodule update --init --recursive
-```
-
-A few small changes are required in the OpenMote firmware to make the compilation work, you can apply them by executing the following:
-``` bash
-patch -p0 < firmware-patch.diff
-```
-
-Finally generate the libcc2538.a file:
+Generate the libcc2538.a file:
 ``` bash
 cd OpenMoteFirmware/platform/cc2538/libcc2538
 python libcc2538.py
@@ -28,5 +25,5 @@ Make sure the [OpenBase](http://www.openmote.com/hardware/openbase.html) is conn
 Run the following commands (from the sniffer directory) to compile the code and then program it to the connected OpenMote:
 ``` bash
 make
-sudo make bsl
+make bsl
 ```

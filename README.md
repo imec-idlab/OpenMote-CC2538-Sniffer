@@ -18,7 +18,7 @@ To flash the sniffer to the OpenMote, a script is provided which only works when
 ## Installing dependencies
 The host software is a python script, so if you are a windows user you must first install python if you haven't already. The code has been written to be compatible with both python 2 and 3, so which version you have doesn't really matter.
 
-One dependency that you will have to install is [pySerial](https://pypi.python.org/pypi/pyserial). It can easily be installed through pip or with easy_install or you can just manually download it and run the setup.
+One dependency that you will have to install is [pySerial](https://pypi.python.org/pypi/pyserial).
 
 Windows users must also install [pywin32](https://sourceforge.net/projects/pywin32/files/pywin32/).
 
