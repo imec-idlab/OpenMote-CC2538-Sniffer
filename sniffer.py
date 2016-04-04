@@ -13,6 +13,7 @@ import signal
 import subprocess
 import threading
 import argparse
+import errno
 
 platform = platform.system()
 if platform != 'Windows' and platform != 'Linux' and platform != 'Darwin':
@@ -404,13 +405,17 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                   + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
                     ser.write(encode('NACK' + chr((lastIndex >> 8) & 0xff) + chr(lastIndex & 0xff)
                                             + chr((lastSeqNr >> 8) & 0xff) + chr(lastSeqNr & 0xff)))
-    except BrokenPipeError:
-        actualSnifferTerminated = True
-        print('ERROR: Pipe to wireshark is broken')
+
     except serial.serialutil.SerialException as e:
         actualSnifferTerminated = True
         print('ERROR: Serial error, assuming OpenMote disconnected')
 
+    except IOError as e:
+        actualSnifferTerminated = True
+        if e.errno == errno.EPIPE:
+            print('ERROR: Pipe to wireshark is broken')
+        else:
+            raise
 
 def main():
     global ser
