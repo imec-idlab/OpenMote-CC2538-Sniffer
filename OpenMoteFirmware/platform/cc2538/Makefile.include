@@ -36,9 +36,8 @@ LINKER_LIBS += -lcc2538
 
 LIBCC2538     = libcc2538.a
 
-# Check if TARGET points to a valid target
 ifeq "$(wildcard $(PLATFORM_SRC)/$(LIBCC2538))" ""
-$(error Error! $(LIBCC2538) does not exist.)
+BUILD_LIBCC2538 = libcc2538.py
 endif
 
 ###############################################################################
@@ -79,7 +78,11 @@ BSL_EXT    = hex
 
 ###############################################################################
 
-.PHONY: jlink load debug bsl
+.PHONY: $(BUILD_LIBCC2538) jlink load debug nemiver bsl
+
+$(BUILD_LIBCC2538):
+	@echo "Building $(LIBCC2538)..."
+	@cd "$(PLATFORM_SRC)/libcc2538/" && $(BSL_PYTHON) libcc2538.py
 
 jlink:
 	@echo "Initializing Segger J-Link..."

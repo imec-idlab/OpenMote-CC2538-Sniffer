@@ -9,16 +9,6 @@ On older Ubuntu versions, the required packages were not available in the standa
 
 Other linux distros are of course also supported (tested on Arch Linux), but you will have to check for yourself which packages you need.
 
-### Preparation
-Generate the libcc2538.a file:
-``` bash
-cd OpenMoteFirmware/platform/cc2538/libcc2538
-python libcc2538.py
-ls .. | grep libcc2538.a
-```
-
-The third command should have printed "libcc2538.a" which means that the file was successfully generated. If it doesn't print anything then something went wrong in the python script. Open libcc2538.py with a text editor and remove the "stderr=devnull" parameter that you find somewhere in it. Now run the python script again and fix the errors that you receive.
-
 ### Compiling and flashing sniffer
 Make sure the [OpenBase](http://www.openmote.com/hardware/openbase.html) is connected.
 

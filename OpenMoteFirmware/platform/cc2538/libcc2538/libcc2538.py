@@ -36,7 +36,7 @@ def rename_files(folder, extension):
     
 def execute_makefile():
     print("Executing Makefile..."),
-    subprocess.call(["make"], stdout=devnull, stderr=devnull, shell=False)
+    subprocess.call(["make"], shell=False)
     print("ok!")
     
 def copy_library():

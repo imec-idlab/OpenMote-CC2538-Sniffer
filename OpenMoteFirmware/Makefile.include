@@ -136,7 +136,7 @@ endif
 .PHONY: all
 all: pre build post stats
 
-pre:
+pre: $(BUILD_LIBCC2538)
 	@echo "Building '$(PROJECT_NAME)' project..."
 	@mkdir -p $(BIN_PATH)
 	
