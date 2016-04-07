@@ -67,6 +67,18 @@ BIN_TARGET = $(addprefix $(BIN_PATH)/, $(BIN_FILES))
 
 ###############################################################################
 
+ifeq ($(OS),Windows_NT)
+    MKDIR = if not exist $(1) mkdir $(1)
+    RMDIR = if exist $(1) rmdir /s /q $(1)
+    RM = if exist $(1) del /q $(1)
+else
+    MKDIR = mkdir -p $(1)
+    RMDIR = rm -rf $(1)
+    RM = rm -f $(1)
+endif
+
+###############################################################################
+
 .DEFAULT_GOAL = library
 
 .PHONY: library
@@ -74,7 +86,7 @@ library: pre build post
 
 pre:
 	@echo "Building '$(PROJECT_NAME)' library..."
-	@mkdir -p $(BIN_PATH)
+	@$(call MKDIR,$(BIN_PATH))
 
 build: $(BIN_TARGET)
 
@@ -84,8 +96,8 @@ post: $(PROJECT_NAME).a
 .PHONY: clean
 clean:
 	@echo "Cleaning '$(PROJECT_NAME)' done."
-	@rm -rf $(BIN_PATH)
-	@rm -f $(PROJECT_NAME).a
+	@$(call RMDIR,$(BIN_PATH))
+	@$(call, RM,$(PROJECT_NAME).a)
 	
 ###############################################################################
 

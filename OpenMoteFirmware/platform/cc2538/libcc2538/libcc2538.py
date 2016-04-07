@@ -1,4 +1,4 @@
-import os, sys, subprocess
+import os, sys, subprocess, shutil
 
 devnull = open(os.devnull, 'w')
 
@@ -16,21 +16,13 @@ def generate_makefile(folder, filenames):
     of.close()
     print("ok")
 
-def rename_files(folder, extension):
+def find_src_files(folder, extension):
     result = []
-    print("Renaming files..."),
+    print("Searching files..."),
     for filename in os.listdir(folder):
         name_, extension_ = filename.split(".")
         if ((extension_ == extension)):
-            processed = name_.endswith("_")
-            if (not processed):
-                name = name_ + "_." + extension_
-                src = os.path.join(folder, filename)
-                dst = os.path.join(folder, name)
-                os.rename(src, dst)
-            else:
-                name = filename
-            result.append(name)
+            result.append(filename)
     print("ok!")
     return result
     
@@ -40,19 +32,17 @@ def execute_makefile():
     print("ok!")
     
 def copy_library():
-    print("Copying libcc2538..."),
-    subprocess.call(["mv", "libcc2538.a", "../libcc2538.a"], shell=False)
+    print("Moving libcc2538..."),
+    shutil.move("libcc2538.a", "../libcc2538.a")
     print("ok!")
     
 def revert_files():
     print("Reverting source files..."),
-    subprocess.call(["rm", "-rf", "bin"], shell=False)
-    subprocess.call(["rm", "-rf", "src"], shell=False)
-    subprocess.call(["git", "checkout", "src"], shell=False)
+    shutil.rmtree("bin")
     print("ok!")
 
 def main():
-    src_files = rename_files(src_folder, src_extension)
+    src_files = find_src_files(src_folder, src_extension)
     if (src_files):
         generate_makefile(src_folder, src_files)
         execute_makefile()
