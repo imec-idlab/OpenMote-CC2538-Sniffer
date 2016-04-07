@@ -124,6 +124,13 @@ endif
 
 ###############################################################################
 
+# Copy sniffer to root directory after building
+ifeq ($(COPY_SNIFFER_HEX), TRUE)
+    COPY_SNIFFER_HEX_TARGET = copy_sniffer_hex
+endif
+
+###############################################################################
+
 .DEFAULT_GOAL = all
 
 .PHONY: all
@@ -135,9 +142,13 @@ pre:
 	
 build: $(BIN_TARGET)
 
-post: $(PROJECT_NAME).hex $(PROJECT_NAME).bin
+post: $(PROJECT_NAME).hex $(PROJECT_NAME).bin $(COPY_SNIFFER_HEX_TARGET)
 	@echo "Building '$(PROJECT_NAME)' done."
-    
+
+copy_sniffer_hex:
+	@echo "Copying OpenMoteSniffer.hex..."
+	@cp $(PROJECT_NAME).hex ../OpenMoteSniffer.hex
+
 stats: $(PROJECT_NAME).elf
 	@-$(OBJSIZE) $(PROJECT_NAME).elf
 

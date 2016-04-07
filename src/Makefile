@@ -1,3 +1,6 @@
+# Copy sniffer to root directory after building
+COPY_SNIFFER_HEX = TRUE
+
 # Project name and files to compile
 PROJECT_NAME  = sniffer
 PROJECT_FILES = main.cpp
