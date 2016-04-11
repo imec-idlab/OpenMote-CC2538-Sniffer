@@ -3,4 +3,7 @@ bin/
 *.bin
 *.hex
 *.elf
+
+/OpenMoteFirmware/platform/cc2538/libcc2538/src/Makefile.include
+
 !OpenMoteSniffer.hex

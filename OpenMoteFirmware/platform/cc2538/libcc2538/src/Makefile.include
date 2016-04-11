@@ -1,1 +1,0 @@
-SRC_FILES += libcc2538_adc.c libcc2538_aes.c libcc2538_ccm.c libcc2538_cpu.c libcc2538_debug.c libcc2538_flash.c libcc2538_gpio.c libcc2538_gptimer.c libcc2538_i2c.c libcc2538_interrupt.c libcc2538_ioc.c libcc2538_pka.c libcc2538_sha256.c libcc2538_sleepmode.c libcc2538_ssi.c libcc2538_systick.c libcc2538_sys_ctrl.c libcc2538_uart.c libcc2538_udma.c libcc2538_watchdog.c 
