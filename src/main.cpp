@@ -125,7 +125,7 @@ int main()
     xTaskCreate(serialTask, "Serial", 128, NULL, tskIDLE_PRIORITY+1, NULL);
 
     // Enable the UART peripheral
-    uart.enable(460800, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
+    uart.enable(921600, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
     uart.setRxCallback(&uartRxCallback);
     uart.enableInterrupts();
 
@@ -456,6 +456,14 @@ static void serialReceive(uint8_t byte)
                         CC2538_RF_CSP_ISFLUSHRX();
                         led_green.off();
                         led_yellow.off();
+                        led_orange.off();
+                        led_red.off();
+
+                        // Empty buffer and reset sequence number
+                        bufferIndexRadio = 0;
+                        bufferIndexSerialSend = 0;
+                        bufferIndexAcked = 0;
+                        seqNr = 0;
                     }
                     else // Invalid packet received, resend everything up to the last received ACK
                         bufferIndexSerialSend = bufferIndexAcked;
@@ -554,7 +562,7 @@ static void serialSend()
     else if (bufferIndexSerialSend < bufferIndexAcked)
         dist = BUFFER_LEN - bufferIndexAcked + bufferIndexSerialSend;
 
-    if (dist > 800)
+    if (dist > 2000)
     {
         bufferIndexSerialSend = bufferIndexAcked;
         led_orange.on();
