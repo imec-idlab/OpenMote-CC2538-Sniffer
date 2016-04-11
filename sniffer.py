@@ -37,6 +37,8 @@ output = None
 outputIsFile = True
 actualSnifferTerminated = False
 
+BAUDRATE = 921600
+
 HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
 HDLC_ESCAPE_MASK = 0x20
@@ -144,7 +146,7 @@ def createPipe(name, force):
                 if response == 'y' or response == 'Y':
                     os.remove(name)
                 else:
-                    sys.exit()
+                    return False
             else:
                 os.remove(name)
 
@@ -159,6 +161,8 @@ def createPipe(name, force):
                                            65536,
                                            300,
                                            None)
+    return True
+
 
 def removePipe(name):
     if platform != 'Windows':
@@ -282,9 +286,10 @@ def connectToOpenMote(channel, frameFilteringLevel):
             break
     else:
         print('ERROR: Failed to connect to OpenMote')
-        sys.exit(1)
+        return False
 
     print('Connected to OpenMote')
+    return True
 
 
 def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
@@ -408,14 +413,14 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
 
     except serial.serialutil.SerialException as e:
         actualSnifferTerminated = True
-        print('ERROR: Serial error, assuming OpenMote disconnected')
+        print('ERROR: Serial error, assuming OpenMote disconnected. PySerial error: ' + str(e))
 
     except IOError as e:
         actualSnifferTerminated = True
         if e.errno == errno.EPIPE:
             print('ERROR: Pipe to wireshark is broken')
         else:
-            raise
+            print('ERROR: Unknown error. IOError: ' + str(e))
 
 def main():
     global ser
@@ -454,7 +459,7 @@ def main():
 
     if args.channel != None and (args.channel < 11 or args.channel > 26):
         print('Channel should be between 11 and 26')
-        sys.exit(2)
+        return
 
     # If no serial port was provided as parameter, find one now
     if args.port == None:
@@ -463,26 +468,39 @@ def main():
             return
 
     # Setup the serial connection
-    ser = serial.Serial(port     = args.port,
-                        baudrate = 460800,
-                        parity   = serial.PARITY_NONE,
-                        stopbits = serial.STOPBITS_ONE,
-                        bytesize = serial.EIGHTBITS,
-                        xonxoff  = False,
-                        rtscts   = False,
-                        dsrdtr   = False,
-                        timeout   = 0.25)
+    try:
+        ser = serial.Serial(port     = args.port,
+                            baudrate = BAUDRATE,
+                            parity   = serial.PARITY_NONE,
+                            stopbits = serial.STOPBITS_ONE,
+                            bytesize = serial.EIGHTBITS,
+                            xonxoff  = False,
+                            rtscts   = False,
+                            dsrdtr   = False,
+                            timeout   = 0.25)
+    except serial.serialutil.SerialException as e:
+        print('ERROR: Could not connect to serial port. PySerial error: ' + str(e))
+        return
 
     # If no channel was provided as parameter, ask the user on which channel to listen
     if args.channel == None:
         args.channel = pickRadioChannel()
         if args.channel == None:
-            sys.exit()
+            return
+
+    # Test our serial connection before starting wireshark
+    if not connectToOpenMote(args.channel, frameFilteringLevel):
+        return
+    try:
+        ser.write(encode('STOP'))
+    except:
+        pass
 
     # Start wireshark when needed
     if args.pcap_file == None:
         print('Creating pipe...')
-        createPipe(args.pipe_name, args.force)
+        if not createPipe(args.pipe_name, args.force):
+            return
 
         print('Starting wireshark...')
         try:
@@ -505,7 +523,7 @@ def main():
                     args.wireshark_executable = str(INPUT('Please provide wireshark executable name: '))
         except KeyboardInterrupt:
             removePipe(args.pipe_name)
-            sys.exit()
+            return
 
         print('Waiting for wireshark to be ready...')
         if platform != 'Windows':
@@ -523,7 +541,7 @@ def main():
                 if response == 'y' or response == 'Y':
                     os.remove(args.pcap_file)
                 else:
-                    sys.exit()
+                    return
             else:
                 os.remove(args.pcap_file)
 
@@ -532,13 +550,13 @@ def main():
 
     # Write the global header to the output
     header = bytearray()
-    header.extend([0xa1, 0xb2, 0xc3, 0xd4])  # magic number
+    header.extend([0xa1, 0xb2, 0xc3, 0xd4]) # magic number
     header.extend([0, 2]) # major version number
     header.extend([0, 4]) # minor version number
-    header.extend([0]*4)  # GMT to local correction
-    header.extend([0]*4)  # accuracy of timestamps
-    header.extend([0, 0, 0xff, 0xff])  # max length of captured packets, in octets
-    header.extend([0, 0, 0, 195])  # 802.15.4 protocol
+    header.extend([0]*4) # GMT to local correction
+    header.extend([0]*4) # accuracy of timestamps
+    header.extend([0, 0, 0xff, 0xff]) # max length of captured packets, in octets
+    header.extend([0, 0, 0, 195]) # 802.15.4 protocol
     if outputIsFile:
         output.write(header)
     else:
@@ -560,7 +578,8 @@ def main():
 
     try:
         while True:
-            connectToOpenMote(args.channel, frameFilteringLevel)
+            if not connectToOpenMote(args.channel, frameFilteringLevel):
+                cleanup()
 
             stopSniffingThread = False
             sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, frameFilteringLevel, args.replace_fcs])
