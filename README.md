@@ -50,6 +50,17 @@ python sniffer.py -h
 
 To pause the sniffer to change the channel or quit, just press the return key.
 
+## FCS vs RSSI/LQI
+Although the OpenMote provides the FCS in the TI CC24XX format, the host will recalculate the FCS before passing it to wireshark (when the checksum is correct).
+
+If you want to see the TI CC24XX FCS (which contains the RSSI and LQI) in wireshark then you should pass the --replace-fcs option to the sniffer.
+
+Wireshark supports both these variations, however only one can be used at a time. So if wireshark is parsing the FCS in the wrong way then you might want to change this wireshark setting.
+If you already have packets then you can right click on the FCS on one of them and directly check/uncheck "TI CC24XX FCS format" under the Protocol Preferences menu. If you don't have any packets yet you can go to Edit > Preferences in the menu bar. In the list under Protocols, search for IEEE 802.15.4. Check/Uncheck the "TI CC24XX FCS format" option which you find here.
+
+## Compiling the sniffer yourself
+For instructions on how to recompile the sniffer, check the README.md file inside the src folder.
+
 ## Potential issues
 
 ### Linux: Permission denied: '/dev/ttyUSBX'
@@ -71,6 +82,3 @@ When running the sniffer on Windows, a small change is required in the settings 
 5. Change the Latency Timer (msec) to 1 (or the lowest possible setting)
 6. Change the USB Transfer Sizes to 64 (or the lowest possible settings)
 7. Save and close
-
-## Leds and buttons on OpenMote
-TODO: Short description about what the leds mean and what happens when the RESET or USER button is pressed
