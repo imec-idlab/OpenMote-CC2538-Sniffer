@@ -254,7 +254,8 @@ def connectToOpenMote(channel, quiet = False):
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     receiving = False
     for i in range(3):
-        print('Connecting to OpenMote...')
+        if not quiet:
+            print('Connecting to OpenMote...')
         packet = bytearray()
         packet.extend(b'RST')
         packet.append(channel)
@@ -274,7 +275,8 @@ def connectToOpenMote(channel, quiet = False):
                             receiving = False
                             msg = decode(msg, quiet=True)[0]
                             if len(msg) > 0 and msg == bytearray(b'READY'):
-                                print('Connected to OpenMote')
+                                if not quiet:
+                                    print('Connected to OpenMote')
                                 return True
                     else:
                         msg.append(c)
