@@ -425,7 +425,7 @@ static void serialReceive(uint8_t byte)
                         radio.setChannel(message[3]);
 
                         // Enable frame filtering if requested
-                        if (message[4] == '1')
+                        if (message[4] == 1)
                             HWREG(RFCORE_XREG_FRMFILT0) |= RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
                         else
                             HWREG(RFCORE_XREG_FRMFILT0) &= ~RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
