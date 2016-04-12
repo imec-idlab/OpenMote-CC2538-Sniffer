@@ -38,6 +38,8 @@
 #define BUFFER_LEN              8500
 #define UART_RX_BUFFER_LEN      128
 
+#define BAUDRATE  921600
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void uartByteReceived();
@@ -61,7 +63,7 @@ extern GpioOut led_orange;
 extern GpioOut led_red;
 extern GpioOut led_yellow;
 
-static const uint16_t lut[256] = {
+static const uint16_t precompiled_crc16_table[256] = {
     0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
     0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
     0x1081, 0x0108, 0x3393, 0x221A, 0x56A5, 0x472C, 0x75B7, 0x643E,
@@ -130,7 +132,7 @@ int main()
     xTaskCreate(serialTask, "Serial", 128, NULL, tskIDLE_PRIORITY+1, NULL);
 
     // Enable the UART peripheral
-    uart.enable(921600, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
+    uart.enable(BAUDRATE, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
     uart.setRxCallback(&uartRxCallback);
     uart.enableInterrupts();
 
@@ -139,8 +141,7 @@ int main()
     radio.setChannel(26);
 
     // Set up radio interrupts but don't enable them until pc is connected
-    HWREG(RFCORE_XREG_RFIRQM0) = 0x46; // RXPKTDONE, SFD and FIFOP interrupts
-    HWREG(RFCORE_XREG_RFERRM) = RFCORE_XREG_RFERRM_RFERRM_M; // Enable RF error interrupts (TODO: Look into those errors)
+    HWREG(RFCORE_XREG_RFIRQM0) = (1 << 6) | (1 << 2) | (1 << 1); // RXPKTDONE, SFD and FIFOP interrupts
     IntRegister(INT_RFCORERTX, radioInterruptHandler);
     IntPrioritySet(INT_RFCORERTX, (6 << 5)); // More important than UART interrupt
 
@@ -261,8 +262,10 @@ static void radioInterruptHandler()
         CC2538_RF_CSP_ISRXON();
         led_yellow.off();
     }
-
-    // TODO: Also check for RFCORE_SFR_RFIRQF0_FIFOP and flush if it occurs?
+    else // This should not happen (could be RFCORE_SFR_RFIRQF0_FIFOP which means packet can't be valid)
+    {
+        flushRadioRX();
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -288,7 +291,7 @@ static void hdlc(uint8_t dataLength)
     // Calculate the CRC
     uint16_t crc = 0xffff;
     for (uint8_t i = 0; i < dataLength; ++i)
-        crc = lut[buffer[bufferIndexSerialSend + 1 + i] ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
+        crc = precompiled_crc16_table[buffer[bufferIndexSerialSend + 1 + i] ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
 
     // Escape the data
     for (uint8_t i = 0; i < dataLength; ++i)
@@ -409,7 +412,7 @@ static void serialReceive(uint8_t byte)
                             bufferIndexSerialSend = bufferIndexRadio;
                         }
                     }
-                    else if ((messageLen == 5)
+                    else if ((messageLen == 4)
                      && (message[0] == 'R')
                      && (message[1] == 'S')
                      && (message[2] == 'T'))
@@ -428,12 +431,6 @@ static void serialReceive(uint8_t byte)
 
                         // Set the requested channel
                         radio.setChannel(message[3]);
-
-                        // Enable frame filtering if requested
-                        if (message[4] == 1)
-                            HWREG(RFCORE_XREG_FRMFILT0) |= RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
-                        else
-                            HWREG(RFCORE_XREG_FRMFILT0) &= ~RFCORE_XREG_FRMFILT0_FRAME_FILTER_EN;
 
                         // Send the READY message
                         UARTCharPut(uart.getBase(), HDLC_FLAG);
@@ -525,12 +522,12 @@ static void serialReceive(uint8_t byte)
         {
             escaping = false;
             message[messageLen++] = byte ^ HDLC_ESCAPE_MASK;
-            crc = lut[(byte ^ HDLC_ESCAPE_MASK) ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
+            crc = precompiled_crc16_table[(byte ^ HDLC_ESCAPE_MASK) ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
         }
         else // The byte is not escaped
         {
             message[messageLen++] = byte;
-            crc = lut[byte ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
+            crc = precompiled_crc16_table[byte ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
         }
     }
 }

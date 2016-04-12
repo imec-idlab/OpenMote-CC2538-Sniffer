@@ -247,14 +247,9 @@ def encode(msg):
     return byteArray
 
 
-def connectToOpenMote(channel, frameFilteringLevel, quiet = False):
+def connectToOpenMote(channel, quiet = False):
     ser.flushInput()
     ser.flushOutput()
-
-    if frameFilteringLevel == 3:
-        enableFrameFiltering = True
-    else:
-        enableFrameFiltering = False
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
     receiving = False
@@ -263,7 +258,6 @@ def connectToOpenMote(channel, frameFilteringLevel, quiet = False):
         packet = bytearray()
         packet.extend(b'RST')
         packet.append(channel)
-        packet.append(enableFrameFiltering)
         ser.write(encode(packet))
         begin = time.time()
         while time.time() - begin < 1:
@@ -289,7 +283,7 @@ def connectToOpenMote(channel, frameFilteringLevel, quiet = False):
     return False
 
 
-def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
+def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
     global actualSnifferTerminated
 
     msg = bytearray()
@@ -331,7 +325,7 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                     else:
                                         print('ERROR: invalid sequence number occured, restarting')
 
-                                    if not connectToOpenMote(channel, frameFilteringLevel):
+                                    if not connectToOpenMote(channel):
                                         return
 
                                     msg = bytearray()
@@ -353,8 +347,8 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                     lastIndex = (msg[0] << 8) + msg[1]
                                     lastSeqNr = (msg[2] << 8) + msg[3]
 
-                                    # When requested, only accept packets with a valid CRC
-                                    if frameFilteringLevel != 1 or msg[-1] & 128 != 0:
+                                    # Discard packets with a bad CRC when requested
+                                    if not discardPacketsWithBadCRC or msg[-1] & 128 != 0:
 
                                         # Convert the string to a bytearray to write it to the pipe
                                         packet = bytearray()
@@ -464,23 +458,14 @@ def main():
     parser.add_argument('-t', '--pipe', dest='pipe_name', default='fifopipe',
                         help='Name of the temporary pipe to wireshark (when not capturing to file)')
     parser.add_argument('-o', '--output', dest='pcap_file',
-                        help='Filename of .pcap file to output. The existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file.')
+                        help='Filename of .pcap file to output. The existence of this parameter decides whether real-time capturing with wireshark is used or whether the sniffer just outputs to a pcap file')
     parser.add_argument('-f', '--force', action='store_true',
                         help='Overwrite pcap file or pipe when it already exists')
     parser.add_argument('--replace-fcs', action='store_true',
-                        help='Replace the normal radio FCS by the TI CC24XX FCS which contains the RSSI and LQI.')
-    parser.add_argument('--discard-bad-crc', action='store_true',
-                        help='Discard packets with a wrong CRC')
-    parser.add_argument('--enable-frame-filtering', action='store_true',
-                        help='Discard packets that do not satisfy the third-level filtering requirements as specified in the IEEE 802.15.4 standard. To only apply first level filtering, use the --discard-bad-crc option')
+                        help='Replace the normal radio FCS by the TI CC24XX FCS which contains the RSSI and LQI')
+    parser.add_argument('--keep-bad-fcs', action='store_true',
+                        help='Don\'t discard packets that have a bad checksum')
     args = parser.parse_args()
-
-    wiresharkProcess = None
-    frameFilteringLevel = 0
-    if args.discard_bad_crc:
-        frameFilteringLevel = 1
-    if args.enable_frame_filtering:
-        frameFilteringLevel = 3
 
     if args.channel != None and (args.channel < 11 or args.channel > 26):
         print('Channel should be between 11 and 26')
@@ -515,7 +500,7 @@ def main():
 
     # Test our serial connection before starting wireshark
     print('Testing serial connection...')
-    if not connectToOpenMote(args.channel, frameFilteringLevel):
+    if not connectToOpenMote(args.channel, True):
         return
     try:
         ser.write(encode(bytearray(b'STOP')))
@@ -523,6 +508,7 @@ def main():
         pass
 
     # Start wireshark when needed
+    wiresharkProcess = None
     if args.pcap_file == None:
         print('Creating pipe...')
         if not createPipe(args.pipe_name, args.force):
@@ -605,11 +591,11 @@ def main():
 
     try:
         while True:
-            if not connectToOpenMote(args.channel, frameFilteringLevel):
+            if not connectToOpenMote(args.channel):
                 cleanup()
 
             stopSniffingThread = False
-            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, frameFilteringLevel, args.replace_fcs])
+            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, not args.keep_bad_fcs, args.replace_fcs])
             sniffingThread.start()
 
             INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
