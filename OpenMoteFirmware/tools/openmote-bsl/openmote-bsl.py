@@ -26,9 +26,7 @@ bsl_boards = ["openbase", "openrpi", "openusb"]
 # Define the relative path to the project home
 openmote_bsl_path = "../../tools/openmote-bsl"
 if not os.path.isdir(openmote_bsl_path):
-    openmote_bsl_path = "../OpenMoteFirmware/tools/openmote-bsl"
-    if not os.path.isdir(openmote_bsl_path):
-        openmote_bsl_path = "OpenMoteFirmware/tools/openmote-bsl"
+    openmote_bsl_path = os.path.dirname(os.path.realpath(sys.argv[0]))
 
 # Define logging file name, path and configuration
 log_name = "openmote-bsl.cfg"
