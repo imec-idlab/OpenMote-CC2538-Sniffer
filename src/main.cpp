@@ -1,3 +1,8 @@
+/**
+ * @author     Bruno Van de Velde (bruno@texus.me)
+ * @copyright  This file is licensed under the GNU General Public License v2.
+ */
+
 #include "Board.h"
 #include "Radio.h"
 #include "Uart.h"

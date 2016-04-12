@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 
+__author__ = 'Bruno Van de Velde (bruno@texus.me)'
+__license__ = 'GNU General Public License v2'
+
 import serial
 import struct
 import os
