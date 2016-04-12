@@ -354,7 +354,7 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                     lastSeqNr = (msg[2] << 8) + msg[3]
 
                                     # When requested, only accept packets with a valid CRC
-                                    if frameFilteringLevel != 1 or msg[-1] & 128 == 1:
+                                    if frameFilteringLevel != 1 or msg[-1] & 128 != 0:
 
                                         # Convert the string to a bytearray to write it to the pipe
                                         packet = bytearray()
