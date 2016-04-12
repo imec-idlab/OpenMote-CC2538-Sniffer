@@ -619,10 +619,9 @@ def main():
             if actualSnifferTerminated:
                 break
 
-            if wiresharkProcess != None:
-                if wiresharkProcess.poll() != None:
-                    print('ERROR: Wireshark no longer running')
-                    break
+            # Stop the sniffer when wireshark was already closed
+            if wiresharkProcess != None and wiresharkProcess.poll() != None:
+                break
 
             try:
                 ser.write(encode(bytearray(b'STOP')))
