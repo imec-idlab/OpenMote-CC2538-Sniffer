@@ -254,7 +254,6 @@ def connectToOpenMote(channel, frameFilteringLevel, quiet = False):
         enableFrameFiltering = False
 
     # Keep sending RESET packet and discard all bytes until the READY packet arrives
-    connected = False
     receiving = False
     for i in range(3):
         print('Connecting to OpenMote...')
@@ -277,23 +276,14 @@ def connectToOpenMote(channel, frameFilteringLevel, quiet = False):
                         if len(msg) != 0:
                             receiving = False
                             msg = decode(msg, quiet=True)[0]
-                            if len(msg) > 0:
-                                if msg == bytearray(b'READY'):
-                                    connected = True
-                                    break
-                                elif len(msg) == 9 and msg[4:] == bytearray(b'READY'):
-                                    connectToOpenMote(channel, frameFilteringLevel)
-                                    return
+                            if len(msg) > 0 and msg == bytearray(b'READY'):
+                                print('Connected to OpenMote')
+                                return True
                     else:
                         msg.append(c)
-        if connected:
-            break
-    else:
-        print('ERROR: Failed to connect to OpenMote')
-        return False
 
-    print('Connected to OpenMote')
-    return True
+    print('ERROR: Failed to connect to OpenMote')
+    return False
 
 
 def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
@@ -338,9 +328,17 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                     else:
                                         print('ERROR: invalid sequence number occured, restarting')
 
-                                    connectToOpenMote(channel, frameFilteringLevel)
-                                    actual_sniffer(channel, frameFilteringLevel, replaceFCS)
-                                    return
+                                    if not connectToOpenMote(channel, frameFilteringLevel):
+                                        return
+
+                                    msg = bytearray()
+                                    unackedByteCount = 0
+                                    lastIndex = 0
+                                    lastSeqNr = 0
+                                    expectedSeqNr = 1
+                                    receiving = False
+                                    faultyPacketIgnored = False
+                                    continue
 
                                 # Ignore the packet if it had a wrong sequence number
                                 if expectedSeqNr == (msg[2] << 8) + msg[3]:
@@ -387,21 +385,29 @@ def actual_sniffer(channel, frameFilteringLevel, replaceFCS):
                                         else:
                                             win32file.WriteFile(output, header)
                                             win32file.WriteFile(output, packet)
-                                else:
-                                    if receivedSeqNr > expectedSeqNr:
-                                        print('WARNING: Received seqNr=' + str(receivedSeqNr)
-                                            + ' higher than expecting seqNr=' + str(expectedSeqNr))
 
-                                # Send an ACK after enough bytes have been received
-                                unackedByteCount += len(msg)
-                                if unackedByteCount >= 250 and lastSeqNr != 0:
-                                    unackedByteCount = 0
-                                    ack = bytearray(b'ACK')
-                                    ack.append((lastIndex >> 8) & 0xff)
-                                    ack.append(lastIndex & 0xff)
-                                    ack.append((lastSeqNr >> 8) & 0xff)
-                                    ack.append(lastSeqNr & 0xff)
-                                    ser.write(encode(ack))
+                                    # Send an ACK after enough bytes have been received
+                                    unackedByteCount += len(msg)
+                                    if unackedByteCount >= 250 and lastSeqNr != 0:
+                                        unackedByteCount = 0
+                                        ack = bytearray(b'ACK')
+                                        ack.append((lastIndex >> 8) & 0xff)
+                                        ack.append(lastIndex & 0xff)
+                                        ack.append((lastSeqNr >> 8) & 0xff)
+                                        ack.append(lastSeqNr & 0xff)
+                                        ser.write(encode(ack))
+
+                                else:
+                                    # The sequence number should never be higher than expected (it can be lower on retransmissions)
+                                    if receivedSeqNr > expectedSeqNr:
+                                        print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
+                                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
+                                        nack = bytearray(b'NACK')
+                                        nack.append((lastIndex >> 8) & 0xff)
+                                        nack.append(lastIndex & 0xff)
+                                        nack.append((lastSeqNr >> 8) & 0xff)
+                                        nack.append(lastSeqNr & 0xff)
+                                        ser.write(encode(nack))
                             else:
                                 print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
                                               + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
