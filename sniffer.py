@@ -4,16 +4,12 @@ __author__ = 'Bruno Van de Velde (bruno@texus.me)'
 __license__ = 'GNU General Public License v2'
 
 import serial
-import struct
 import os
 import sys
 import glob
 import subprocess
 import time
 import platform
-import array
-import signal
-import subprocess
 import threading
 import argparse
 import errno
@@ -24,6 +20,8 @@ if platform != 'Windows' and platform != 'Linux' and platform != 'Darwin':
 
 if platform == 'Windows':
     from win32process import DETACHED_PROCESS
+    import win32pipe
+    import win32file
 
 if (sys.version_info > (3, 0)):
     INPUT = input
@@ -34,52 +32,33 @@ else:
     if platform == 'Windows':
         import _winreg as winreg
 
+
+BAUDRATE      = 921600
+ACK_THRESHOLD = 300
+
+INDEX_OFFSET  = 2
+SEQ_NR_OFFSET = 4
+DATA_OFFSET   = 6
+
+HDLC_FLAG        = 0x7E
+HDLC_ESCAPE      = 0x7D
+HDLC_ESCAPE_MASK = 0x20
+
+class SerialDataType:
+    Packet = 1
+    Ack    = 2
+    Nack   = 3
+    Reset  = 4
+    Ready  = 5
+    Stop   = 6
+
+
 stopSniffingThread = False
 ser = serial.Serial()
 output = None
 outputIsFile = True
 actualSnifferTerminated = False
 
-BAUDRATE = 921600
-
-HDLC_FLAG        = 0x7E
-HDLC_ESCAPE      = 0x7D
-HDLC_ESCAPE_MASK = 0x20
-
-precompiled_crc16_table = [
-    0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
-    0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
-    0x1081, 0x0108, 0x3393, 0x221A, 0x56A5, 0x472C, 0x75B7, 0x643E,
-    0x9CC9, 0x8D40, 0xBFDB, 0xAE52, 0xDAED, 0xCB64, 0xF9FF, 0xE876,
-    0x2102, 0x308B, 0x0210, 0x1399, 0x6726, 0x76AF, 0x4434, 0x55BD,
-    0xAD4A, 0xBCC3, 0x8E58, 0x9FD1, 0xEB6E, 0xFAE7, 0xC87C, 0xD9F5,
-    0x3183, 0x200A, 0x1291, 0x0318, 0x77A7, 0x662E, 0x54B5, 0x453C,
-    0xBDCB, 0xAC42, 0x9ED9, 0x8F50, 0xFBEF, 0xEA66, 0xD8FD, 0xC974,
-    0x4204, 0x538D, 0x6116, 0x709F, 0x0420, 0x15A9, 0x2732, 0x36BB,
-    0xCE4C, 0xDFC5, 0xED5E, 0xFCD7, 0x8868, 0x99E1, 0xAB7A, 0xBAF3,
-    0x5285, 0x430C, 0x7197, 0x601E, 0x14A1, 0x0528, 0x37B3, 0x263A,
-    0xDECD, 0xCF44, 0xFDDF, 0xEC56, 0x98E9, 0x8960, 0xBBFB, 0xAA72,
-    0x6306, 0x728F, 0x4014, 0x519D, 0x2522, 0x34AB, 0x0630, 0x17B9,
-    0xEF4E, 0xFEC7, 0xCC5C, 0xDDD5, 0xA96A, 0xB8E3, 0x8A78, 0x9BF1,
-    0x7387, 0x620E, 0x5095, 0x411C, 0x35A3, 0x242A, 0x16B1, 0x0738,
-    0xFFCF, 0xEE46, 0xDCDD, 0xCD54, 0xB9EB, 0xA862, 0x9AF9, 0x8B70,
-    0x8408, 0x9581, 0xA71A, 0xB693, 0xC22C, 0xD3A5, 0xE13E, 0xF0B7,
-    0x0840, 0x19C9, 0x2B52, 0x3ADB, 0x4E64, 0x5FED, 0x6D76, 0x7CFF,
-    0x9489, 0x8500, 0xB79B, 0xA612, 0xD2AD, 0xC324, 0xF1BF, 0xE036,
-    0x18C1, 0x0948, 0x3BD3, 0x2A5A, 0x5EE5, 0x4F6C, 0x7DF7, 0x6C7E,
-    0xA50A, 0xB483, 0x8618, 0x9791, 0xE32E, 0xF2A7, 0xC03C, 0xD1B5,
-    0x2942, 0x38CB, 0x0A50, 0x1BD9, 0x6F66, 0x7EEF, 0x4C74, 0x5DFD,
-    0xB58B, 0xA402, 0x9699, 0x8710, 0xF3AF, 0xE226, 0xD0BD, 0xC134,
-    0x39C3, 0x284A, 0x1AD1, 0x0B58, 0x7FE7, 0x6E6E, 0x5CF5, 0x4D7C,
-    0xC60C, 0xD785, 0xE51E, 0xF497, 0x8028, 0x91A1, 0xA33A, 0xB2B3,
-    0x4A44, 0x5BCD, 0x6956, 0x78DF, 0x0C60, 0x1DE9, 0x2F72, 0x3EFB,
-    0xD68D, 0xC704, 0xF59F, 0xE416, 0x90A9, 0x8120, 0xB3BB, 0xA232,
-    0x5AC5, 0x4B4C, 0x79D7, 0x685E, 0x1CE1, 0x0D68, 0x3FF3, 0x2E7A,
-    0xE70E, 0xF687, 0xC41C, 0xD595, 0xA12A, 0xB0A3, 0x8238, 0x93B1,
-    0x6B46, 0x7ACF, 0x4854, 0x59DD, 0x2D62, 0x3CEB, 0x0E70, 0x1FF9,
-    0xF78F, 0xE606, 0xD49D, 0xC514, 0xB1AB, 0xA022, 0x92B9, 0x8330,
-    0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
-]
 
 def pickSerialPort():
     ports = []
@@ -98,28 +77,28 @@ def pickSerialPort():
                 pass
 
     if len(ports) == 0:
-        print("No serial ports found!")
+        print('No serial ports found!')
         return None
     elif len(ports) == 1:
-        print("Using serial port '" + str(ports[0]) + "'")
+        print('Using serial port "' + str(ports[0]) + '"')
         return ports[0]
     else:
         ports = sorted(ports)
         while (True):
             try:
-                print("Multiple serial ports were found:")
+                print('Multiple serial ports were found:')
                 for i in range(len(ports)):
-                    print("- [" + str(i) + "] " + str(ports[i]))
-                selectedPort = int(INPUT("Choose your serial port: "))
+                    print('- [' + str(i) + '] ' + str(ports[i]))
+                selectedPort = int(INPUT('Choose your serial port: '))
                 if selectedPort < 0 or selectedPort >= len(ports):
-                    print("Input number is outside bounds!")
+                    print('Input number is outside bounds!')
                     continue
                 else:
                     return ports[selectedPort]
             except KeyboardInterrupt:
                 return None
             except:
-                print("Input parameter is not a number!")
+                print('Input parameter is not a number!')
                 continue
 
 
@@ -127,7 +106,7 @@ def pickRadioChannel():
     channel = 1
     while (channel < 11 or channel > 26) and channel != 0:
         try:
-            channel = int(INPUT("Select the IEEE 802.15.4 channel number (11-26, 0 to exit): "))
+            channel = int(INPUT('Select the IEEE 802.15.4 channel number (11-26, 0 to exit): '))
         except KeyboardInterrupt:
             print('')
             return None
@@ -156,7 +135,7 @@ def createPipe(name, force):
         os.mkfifo(name)
     else:
         global output
-        output = win32pipe.CreateNamedPipe("\\\\.\\pipe\\" + name,
+        output = win32pipe.CreateNamedPipe('\\\\.\\pipe\\' + name,
                                            win32pipe.PIPE_ACCESS_OUTBOUND,
                                            win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_WAIT,
                                            1,
@@ -204,82 +183,112 @@ def decode(msg, quiet=False):
             else:
                 result.append(c)
 
-    if len(result) < 6:
+    if len(result) < 4:
         if not quiet:
-            print("WARNING: Received message too short")
-        return ('', 0)
+            print('WARNING: Received message too short')
+        return ''
 
     if calcCRC(result[:-2]) != ((result[-2] << 8) + result[-1]):
         if not quiet:
-            print("WARNING: CRC check failed!")
-        return ('', 0)
+            print('WARNING: Received message had incorrect serial CRC')
+        return ''
 
-    return (result[:-2], (result[-2] << 8) + result[-1])
+    if result[0] != SerialDataType.Packet and result[0] != SerialDataType.Ready:
+        if not quiet:
+            print('WARNING: Received message had invalid type')
+        return ''
+
+    if result[1] != len(result) - 2:
+        if not quiet:
+            print('WARNING: Received message had incorrect length byte')
+        return ''
+
+    if result[0] == SerialDataType.Packet and len(result) < 8:
+        if not quiet:
+            print('WARNING: Received message too short for type Packet')
+        return ''
+
+    return result[:-2]
 
 
 def encode(msg):
     crc = calcCRC(msg)
 
-    byteArray = bytearray()
-    byteArray.append(HDLC_FLAG)
+    result = bytearray()
+    result.append(HDLC_FLAG)
     for c in msg:
         if c == HDLC_FLAG or c == HDLC_ESCAPE:
-            byteArray.append(HDLC_ESCAPE)
-            byteArray.append(c ^ HDLC_ESCAPE_MASK)
+            result.append(HDLC_ESCAPE)
+            result.append(c ^ HDLC_ESCAPE_MASK)
         else:
-            byteArray.append(c)
+            result.append(c)
 
     crcByte = (crc >> 8) & 0xFF
     if crcByte == HDLC_FLAG or crcByte == HDLC_ESCAPE:
-        byteArray.append(HDLC_ESCAPE)
-        byteArray.append(crcByte ^ HDLC_ESCAPE_MASK)
+        result.append(HDLC_ESCAPE)
+        result.append(crcByte ^ HDLC_ESCAPE_MASK)
     else:
-        byteArray.append(crcByte)
+        result.append(crcByte)
 
     crcByte = (crc >> 0) & 0xFF
     if crcByte == HDLC_FLAG or crcByte == HDLC_ESCAPE:
-        byteArray.append(HDLC_ESCAPE)
-        byteArray.append(crcByte ^ HDLC_ESCAPE_MASK)
+        result.append(HDLC_ESCAPE)
+        result.append(crcByte ^ HDLC_ESCAPE_MASK)
     else:
-        byteArray.append(crcByte)
+        result.append(crcByte)
 
-    byteArray.append(HDLC_FLAG)
-    return byteArray
+    result.append(HDLC_FLAG)
+    return result
+
+
+def serialWrite(dataType, msg):
+    data = bytearray()
+    data.append(dataType)
+    data.append(len(msg) + 2) # Length of passed message + 2 byte crc
+    data.extend(msg)
+    ser.write(encode(data))
+
+
+def serialWriteNack(lastIndex, lastSeqNr):
+    serialWrite(SerialDataType.Nack, [(lastIndex >> 8) & 0xff, lastIndex & 0xff,
+                                      (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
 
 
 def connectToOpenMote(channel, quiet = False):
     ser.flushInput()
     ser.flushOutput()
 
-    # Keep sending RESET packet and discard all bytes until the READY packet arrives
-    receiving = False
-    for i in range(3):
-        if not quiet:
-            print('Connecting to OpenMote...')
-        packet = bytearray()
-        packet.extend(b'RST')
-        packet.append(channel)
-        ser.write(encode(packet))
-        begin = time.time()
-        while time.time() - begin < 1:
-            c = ser.read(1)
-            if len(c) > 0:
-                c = bytearray(c)[0]
-                if not receiving:
-                    if c == HDLC_FLAG:
-                        receiving = True
-                        msg = bytearray()
-                else:
-                    if c == HDLC_FLAG:
-                        if len(msg) != 0:
-                            receiving = False
-                            msg = decode(msg, quiet=True)[0]
-                            if len(msg) > 0 and msg == bytearray(b'READY'):
-                                if not quiet:
-                                    print('Connected to OpenMote')
-                                return True
+    try:
+        # Keep sending RESET packet and discard all bytes until the READY packet arrives
+        receiving = False
+        for i in range(3):
+            if not quiet:
+                print('Connecting to OpenMote...')
+
+            serialWrite(SerialDataType.Reset, [channel])
+            begin = time.time()
+            while time.time() - begin < 1:
+                c = ser.read(1)
+                if len(c) > 0:
+                    c = bytearray(c)[0]
+                    if not receiving:
+                        if c == HDLC_FLAG:
+                            receiving = True
+                            msg = bytearray()
                     else:
-                        msg.append(c)
+                        if c == HDLC_FLAG:
+                            if len(msg) != 0:
+                                receiving = False
+                                msg = decode(msg, quiet=True)
+                                if len(msg) > 0 and msg[0] == SerialDataType.Ready:
+                                    if not quiet:
+                                        print('Connected to OpenMote')
+                                    return True
+                        else:
+                            msg.append(c)
+
+    except serial.serialutil.SerialException as e:
+        print('ERROR: Serial error. PySerial error: ' + str(e))
 
     print('ERROR: Failed to connect to OpenMote')
     return False
@@ -292,7 +301,7 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
     unackedByteCount = 0
     lastIndex = 0
     lastSeqNr = 0
-    expectedSeqNr = 1
+    expectedSeqNr = 0
     receiving = False
     faultyPacketIgnored = False
 
@@ -317,44 +326,38 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                             ts_usec = int((time.time() - ts_sec) * 1000000)
 
                             receiving = False
-                            msg = decode(msg)[0]
+                            msg = decode(msg)
                             if len(msg) > 0:
-                                # Something is wrong when sequence number is 0
-                                receivedSeqNr = (msg[2] << 8) + msg[3]
-                                if receivedSeqNr == 0:
-                                    if len(msg) == 9 and msg[4:] == bytearray(b'READY'):
-                                        print('Sniffer reset detected, restarting')
-                                    else:
-                                        print('ERROR: invalid sequence number occured, restarting')
-
-                                    if not connectToOpenMote(channel):
-                                        return
-
+                                if msg[0] == SerialDataType.Ready:
+                                    print('WARNING: Sniffer reset detected, restarting')
                                     msg = bytearray()
                                     unackedByteCount = 0
                                     lastIndex = 0
                                     lastSeqNr = 0
-                                    expectedSeqNr = 1
+                                    expectedSeqNr = 0
                                     receiving = False
                                     faultyPacketIgnored = False
+                                    if not connectToOpenMote(channel):
+                                        return
                                     continue
 
                                 # Ignore the packet if it had a wrong sequence number
-                                if expectedSeqNr == (msg[2] << 8) + msg[3]:
+                                receivedSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
+                                if expectedSeqNr == receivedSeqNr:
                                     expectedSeqNr += 1
                                     if expectedSeqNr == 65536:
-                                        expectedSeqNr = 1
+                                        expectedSeqNr = 0
 
                                     # Remember the index and sequence number of this packet in case the next one is corrupted
-                                    lastIndex = (msg[0] << 8) + msg[1]
-                                    lastSeqNr = (msg[2] << 8) + msg[3]
+                                    lastIndex = (msg[INDEX_OFFSET] << 8) + msg[INDEX_OFFSET+1]
+                                    lastSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
 
                                     # Discard packets with a bad CRC when requested
                                     if not discardPacketsWithBadCRC or msg[-1] & 128 != 0:
 
                                         # Convert the string to a bytearray to write it to the pipe
                                         packet = bytearray()
-                                        for character in msg[4:-2]:
+                                        for character in msg[DATA_OFFSET:-2]:
                                             packet.append(character)
 
                                         # Recalculate CRC if it was correct and requested
@@ -387,35 +390,20 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
 
                                     # Send an ACK after enough bytes have been received
                                     unackedByteCount += len(msg)
-                                    if unackedByteCount >= 250 and lastSeqNr != 0:
+                                    if unackedByteCount >= ACK_THRESHOLD and lastSeqNr != 0:
                                         unackedByteCount = 0
-                                        ack = bytearray(b'ACK')
-                                        ack.append((lastIndex >> 8) & 0xff)
-                                        ack.append(lastIndex & 0xff)
-                                        ack.append((lastSeqNr >> 8) & 0xff)
-                                        ack.append(lastSeqNr & 0xff)
-                                        ser.write(encode(ack))
+                                        serialWrite(SerialDataType.Ack, [(lastIndex >> 8) & 0xff, lastIndex & 0xff,
+                                                                         (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
 
                                 else:
                                     # The sequence number should never be higher than expected (it can be lower on retransmissions)
                                     if receivedSeqNr > expectedSeqNr:
-                                        print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                                        nack = bytearray(b'NACK')
-                                        nack.append((lastIndex >> 8) & 0xff)
-                                        nack.append(lastIndex & 0xff)
-                                        nack.append((lastSeqNr >> 8) & 0xff)
-                                        nack.append(lastSeqNr & 0xff)
-                                        ser.write(encode(nack))
-                            else:
-                                print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                                              + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                                nack = bytearray(b'NACK')
-                                nack.append((lastIndex >> 8) & 0xff)
-                                nack.append(lastIndex & 0xff)
-                                nack.append((lastSeqNr >> 8) & 0xff)
-                                nack.append(lastSeqNr & 0xff)
-                                ser.write(encode(nack))
+                                        print('WARNING: Received sequence number was too high')
+                                        serialWriteNack(lastIndex, lastSeqNr)
+
+                            else: # Message was invalid (e.g. wrong CRC)
+                                serialWriteNack(lastIndex, lastSeqNr)
+
                     else: # Not the closing byte
                         msg.append(c)
 
@@ -423,14 +411,7 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                 if receiving:
                     receiving = False
                     print('WARNING: expected another byte, assuming out of sync')
-                    print('NACK ' + str((lastIndex >> 8) & 0xff) + ' ' + str(lastIndex & 0xff) + ' '
-                                  + str((lastSeqNr >> 8) & 0xff) + ' ' + str(lastSeqNr & 0xff))
-                    nack = bytearray(b'NACK')
-                    nack.append((lastIndex >> 8) & 0xff)
-                    nack.append(lastIndex & 0xff)
-                    nack.append((lastSeqNr >> 8) & 0xff)
-                    nack.append(lastSeqNr & 0xff)
-                    ser.write(encode(nack))
+                    serialWriteNack(lastIndex, lastSeqNr)
 
     except serial.serialutil.SerialException as e:
         actualSnifferTerminated = True
@@ -505,7 +486,7 @@ def main():
     if not connectToOpenMote(args.channel, True):
         return
     try:
-        ser.write(encode(bytearray(b'STOP')))
+        serialWrite(SerialDataType.Stop, [])
     except:
         pass
 
@@ -527,7 +508,7 @@ def main():
                                                             stderr=nullOutput,
                                                             preexec_fn=os.setsid)
                     else:
-                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', "\\\\.\\pipe\\" + args.pipe_name],
+                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', '\\\\.\\pipe\\' + args.pipe_name],
                                                             stdout=nullOutput,
                                                             stderr=nullOutput,
                                                             creationflags=DETACHED_PROCESS)
@@ -579,14 +560,14 @@ def main():
 
     def cleanup():
         try:
-            ser.write(encode(bytearray(b'STOP')))
+            serialWrite(SerialDataType.Stop, [])
         except:
             pass
 
         if outputIsFile:
             output.close()
         else:
-            win32pipe.DisconnectNamedPipe(pipe)
+            win32pipe.DisconnectNamedPipe(output)
 
         if args.pcap_file == None:
             removePipe(args.pipe_name)
@@ -594,7 +575,7 @@ def main():
     try:
         while True:
             if not connectToOpenMote(args.channel):
-                cleanup()
+                break
 
             stopSniffingThread = False
             sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, not args.keep_bad_fcs, args.replace_fcs])
@@ -612,7 +593,7 @@ def main():
                 break
 
             try:
-                ser.write(encode(bytearray(b'STOP')))
+                serialWrite(SerialDataType.Stop, [])
             except:
                 print('ERROR: Failed to inform OpenMote about sniffer being paused')
                 break
@@ -631,5 +612,40 @@ def main():
     cleanup()
 
 
-if __name__ == "__main__":
+precompiled_crc16_table = [
+    0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
+    0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
+    0x1081, 0x0108, 0x3393, 0x221A, 0x56A5, 0x472C, 0x75B7, 0x643E,
+    0x9CC9, 0x8D40, 0xBFDB, 0xAE52, 0xDAED, 0xCB64, 0xF9FF, 0xE876,
+    0x2102, 0x308B, 0x0210, 0x1399, 0x6726, 0x76AF, 0x4434, 0x55BD,
+    0xAD4A, 0xBCC3, 0x8E58, 0x9FD1, 0xEB6E, 0xFAE7, 0xC87C, 0xD9F5,
+    0x3183, 0x200A, 0x1291, 0x0318, 0x77A7, 0x662E, 0x54B5, 0x453C,
+    0xBDCB, 0xAC42, 0x9ED9, 0x8F50, 0xFBEF, 0xEA66, 0xD8FD, 0xC974,
+    0x4204, 0x538D, 0x6116, 0x709F, 0x0420, 0x15A9, 0x2732, 0x36BB,
+    0xCE4C, 0xDFC5, 0xED5E, 0xFCD7, 0x8868, 0x99E1, 0xAB7A, 0xBAF3,
+    0x5285, 0x430C, 0x7197, 0x601E, 0x14A1, 0x0528, 0x37B3, 0x263A,
+    0xDECD, 0xCF44, 0xFDDF, 0xEC56, 0x98E9, 0x8960, 0xBBFB, 0xAA72,
+    0x6306, 0x728F, 0x4014, 0x519D, 0x2522, 0x34AB, 0x0630, 0x17B9,
+    0xEF4E, 0xFEC7, 0xCC5C, 0xDDD5, 0xA96A, 0xB8E3, 0x8A78, 0x9BF1,
+    0x7387, 0x620E, 0x5095, 0x411C, 0x35A3, 0x242A, 0x16B1, 0x0738,
+    0xFFCF, 0xEE46, 0xDCDD, 0xCD54, 0xB9EB, 0xA862, 0x9AF9, 0x8B70,
+    0x8408, 0x9581, 0xA71A, 0xB693, 0xC22C, 0xD3A5, 0xE13E, 0xF0B7,
+    0x0840, 0x19C9, 0x2B52, 0x3ADB, 0x4E64, 0x5FED, 0x6D76, 0x7CFF,
+    0x9489, 0x8500, 0xB79B, 0xA612, 0xD2AD, 0xC324, 0xF1BF, 0xE036,
+    0x18C1, 0x0948, 0x3BD3, 0x2A5A, 0x5EE5, 0x4F6C, 0x7DF7, 0x6C7E,
+    0xA50A, 0xB483, 0x8618, 0x9791, 0xE32E, 0xF2A7, 0xC03C, 0xD1B5,
+    0x2942, 0x38CB, 0x0A50, 0x1BD9, 0x6F66, 0x7EEF, 0x4C74, 0x5DFD,
+    0xB58B, 0xA402, 0x9699, 0x8710, 0xF3AF, 0xE226, 0xD0BD, 0xC134,
+    0x39C3, 0x284A, 0x1AD1, 0x0B58, 0x7FE7, 0x6E6E, 0x5CF5, 0x4D7C,
+    0xC60C, 0xD785, 0xE51E, 0xF497, 0x8028, 0x91A1, 0xA33A, 0xB2B3,
+    0x4A44, 0x5BCD, 0x6956, 0x78DF, 0x0C60, 0x1DE9, 0x2F72, 0x3EFB,
+    0xD68D, 0xC704, 0xF59F, 0xE416, 0x90A9, 0x8120, 0xB3BB, 0xA232,
+    0x5AC5, 0x4B4C, 0x79D7, 0x685E, 0x1CE1, 0x0D68, 0x3FF3, 0x2E7A,
+    0xE70E, 0xF687, 0xC41C, 0xD595, 0xA12A, 0xB0A3, 0x8238, 0x93B1,
+    0x6B46, 0x7ACF, 0x4854, 0x59DD, 0x2D62, 0x3CEB, 0x0E70, 0x1FF9,
+    0xF78F, 0xE606, 0xD49D, 0xC514, 0xB1AB, 0xA022, 0x92B9, 0x8330,
+    0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
+]
+
+if __name__ == '__main__':
     main()

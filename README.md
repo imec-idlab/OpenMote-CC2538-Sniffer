@@ -25,7 +25,7 @@ Windows users must also install [pywin32](https://sourceforge.net/projects/pywin
 ## Program your peripheral
 If the OpenMote is connected to the PC with a OpenBase then just run the flash-bsl script:
 ``` bash
-python flash-bsl.py OpenMoteSniffer.hex
+python flash-bsl.py
 ```
 
 If you get the message "ERROR: Can't connect to target. Ensure boot loader is started." then you will have to enter the Bootloader Backdoor first. Try pressing the RESET button while the ON/SLEEP pin on the OpenBase is connected to GND.
