@@ -7,7 +7,7 @@ The sniffer is split in two components:
 * Host: This is the python script that runs on the PC
 
 Features:
-* The sniffer is **lossless**, all packets are captured (but frame filtering can be activated if wanted)
+* The sniffer is **lossless**, all packets are captured
 * The captured packets can be monitored **real-time** in Wireshark (or can be written to a pcap file)
 * The sniffer is **cross-platform**, it will work on Windows, Linux and Mac OS X
 * You can either show the FCS or replace it with the RSSI, LQI and a FCS Valid bit

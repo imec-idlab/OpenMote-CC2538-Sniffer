@@ -23,14 +23,15 @@ if platform == 'Windows':
     import win32pipe
     import win32file
 
+    if (sys.version_info > (3, 0)):
+        import winreg
+    else:
+        import _winreg as winreg
+
 if (sys.version_info > (3, 0)):
     INPUT = input
-    if platform == 'Windows':
-        import winreg
 else:
     INPUT = raw_input
-    if platform == 'Windows':
-        import _winreg as winreg
 
 
 BAUDRATE      = 921600
