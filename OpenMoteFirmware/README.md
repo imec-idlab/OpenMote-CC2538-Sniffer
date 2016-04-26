@@ -1,4 +1,4 @@
-This folder contains a modified version of the firmware software from February 26, 2016, with the latest commit being [68a7e47](https://github.com/OpenMote/firmware/tree/68a7e470c3e8546f91431d2e08ededd736b7669a).
+This folder contains a modified version of the [firmware](https://github.com/OpenMote/firmware/) software from February 26, 2016, with the latest commit being [68a7e47](https://github.com/OpenMote/firmware/tree/68a7e470c3e8546f91431d2e08ededd736b7669a).
 
 The following changes have been made:
 * The practically empty README.md was replaced by this file
