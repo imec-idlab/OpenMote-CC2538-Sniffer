@@ -61,7 +61,7 @@ outputIsFile = True
 actualSnifferTerminated = False
 
 
-def pickSerialPort():
+def getSerialPortList():
     ports = []
     if platform == 'Darwin':
         ports = [port for port in glob.glob('/dev/tty.usbserial*')]
@@ -77,6 +77,34 @@ def pickSerialPort():
             except:
                 pass
 
+    return ports
+
+
+def selectSerialPortFromList(ports):
+    while (True):
+        try:
+            print('Multiple serial ports were found:')
+            for i in range(len(ports)):
+                print('- [' + str(i) + '] ' + str(ports[i]))
+
+            selectedPort = int(INPUT('Choose your serial port: '))
+            if selectedPort < 0 or selectedPort >= len(ports):
+                print('Input number is outside bounds!')
+                continue
+            else:
+                return ports[selectedPort]
+
+        except KeyboardInterrupt:
+            return None
+
+        except:
+            print('Input parameter is not a number!')
+            continue
+
+
+def pickSerialPort():
+    ports = getSerialPortList()
+
     if len(ports) == 0:
         print('No serial ports found!')
         return None
@@ -84,23 +112,7 @@ def pickSerialPort():
         print('Using serial port "' + str(ports[0]) + '"')
         return ports[0]
     else:
-        ports = sorted(ports)
-        while (True):
-            try:
-                print('Multiple serial ports were found:')
-                for i in range(len(ports)):
-                    print('- [' + str(i) + '] ' + str(ports[i]))
-                selectedPort = int(INPUT('Choose your serial port: '))
-                if selectedPort < 0 or selectedPort >= len(ports):
-                    print('Input number is outside bounds!')
-                    continue
-                else:
-                    return ports[selectedPort]
-            except KeyboardInterrupt:
-                return None
-            except:
-                print('Input parameter is not a number!')
-                continue
+        return selectSerialPortFromList(sorted(ports))
 
 
 def pickRadioChannel():
@@ -152,6 +164,63 @@ def removePipe(name):
         os.remove(name)
     else:
         output.close()
+
+
+def startWireshark(executableName, pipeName):
+    nullOutput = open(os.devnull, 'w')
+    while True:
+        try:
+            if platform != 'Windows':
+                return subprocess.Popen([executableName, '-k', '-i', pipeName],
+                                         stdout=nullOutput,
+                                         stderr=nullOutput,
+                                         preexec_fn=os.setsid)
+            else:
+                return subprocess.Popen([executableName, '-k', '-i', '\\\\.\\pipe\\' + pipeName],
+                                         stdout=nullOutput,
+                                         stderr=nullOutput,
+                                         creationflags=DETACHED_PROCESS)
+        except FileNotFoundError:
+            print('ERROR: Failed to execute "' + executableName + '"')
+            executableName = str(INPUT('Please provide wireshark executable name: '))
+
+
+def outputGlobalHeader():
+    header = bytearray()
+    header.extend([0xa1, 0xb2, 0xc3, 0xd4]) # magic number
+    header.extend([0, 2]) # major version number
+    header.extend([0, 4]) # minor version number
+    header.extend([0]*4) # GMT to local correction
+    header.extend([0]*4) # accuracy of timestamps
+    header.extend([0, 0, 0xff, 0xff]) # max length of captured packets, in octets
+    header.extend([0, 0, 0, 195]) # 802.15.4 protocol
+    if outputIsFile:
+        output.write(header)
+    else:
+        win32file.WriteFile(output, header)
+
+
+def outputPacket(packet):
+    ts_sec = int(time.time())
+    ts_usec = int((time.time() - ts_sec) * 1000000)
+
+    header = bytearray()
+    header.append((ts_sec >> 24) & 0xff) # timestamp seconds
+    header.append((ts_sec >> 16) & 0xff) # timestamp seconds
+    header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
+    header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
+    header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
+    header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
+    header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
+    header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
+    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
+    header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
+    if outputIsFile:
+        output.write(header)
+        output.write(packet)
+    else:
+        win32file.WriteFile(output, header)
+        win32file.WriteFile(output, packet)
 
 
 def calcRadioCRC(msg):
@@ -212,31 +281,23 @@ def decode(msg, quiet=False):
     return result[:-2]
 
 
+def encodeByte(byte):
+    if byte == HDLC_FLAG or byte == HDLC_ESCAPE:
+        return [HDLC_ESCAPE, byte ^ HDLC_ESCAPE_MASK]
+    else:
+        return [byte]
+
+
 def encode(msg):
     crc = calcCRC(msg)
 
     result = bytearray()
     result.append(HDLC_FLAG)
     for c in msg:
-        if c == HDLC_FLAG or c == HDLC_ESCAPE:
-            result.append(HDLC_ESCAPE)
-            result.append(c ^ HDLC_ESCAPE_MASK)
-        else:
-            result.append(c)
+        result.extend(encodeByte(c));
 
-    crcByte = (crc >> 8) & 0xFF
-    if crcByte == HDLC_FLAG or crcByte == HDLC_ESCAPE:
-        result.append(HDLC_ESCAPE)
-        result.append(crcByte ^ HDLC_ESCAPE_MASK)
-    else:
-        result.append(crcByte)
-
-    crcByte = (crc >> 0) & 0xFF
-    if crcByte == HDLC_FLAG or crcByte == HDLC_ESCAPE:
-        result.append(HDLC_ESCAPE)
-        result.append(crcByte ^ HDLC_ESCAPE_MASK)
-    else:
-        result.append(crcByte)
+    result.extend(encodeByte((crc >> 8) & 0xFF));
+    result.extend(encodeByte(crc & 0xFF));
 
     result.append(HDLC_FLAG)
     return result
@@ -271,7 +332,7 @@ def connectToOpenMote(channel, quiet = False):
             while time.time() - begin < 1:
                 c = ser.read(1)
                 if len(c) > 0:
-                    c = bytearray(c)[0]
+                    c = bytearray(c)[0] # c is always a single byte, but it was returned as an array
                     if not receiving:
                         if c == HDLC_FLAG:
                             receiving = True
@@ -298,16 +359,19 @@ def connectToOpenMote(channel, quiet = False):
 def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
     global actualSnifferTerminated
 
-    msg = bytearray()
-    unackedByteCount = 0
-    lastIndex = 0
-    lastSeqNr = 0
-    expectedSeqNr = 0
-    receiving = False
-    faultyPacketIgnored = False
-
+    restart = True
     try:
         while not stopSniffingThread:
+            if restart:
+                msg = bytearray()
+                unackedByteCount = 0
+                lastIndex = 0
+                lastSeqNr = 0
+                expectedSeqNr = 0
+                receiving = False
+                faultyPacketIgnored = False
+                restart = False
+
             c = ser.read(1)
             if len(c) > 0:
                 c = bytearray(c)[0]
@@ -322,32 +386,24 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                         if len(msg) == 0:
                             print('WARNING: out of sync detected')
                         else:
-                            # Get the timestamp
-                            ts_sec = int(time.time())
-                            ts_usec = int((time.time() - ts_sec) * 1000000)
-
                             receiving = False
                             msg = decode(msg)
                             if len(msg) > 0:
                                 if msg[0] == SerialDataType.Ready:
                                     print('WARNING: Sniffer reset detected, restarting')
-                                    msg = bytearray()
-                                    unackedByteCount = 0
-                                    lastIndex = 0
-                                    lastSeqNr = 0
-                                    expectedSeqNr = 0
-                                    receiving = False
-                                    faultyPacketIgnored = False
                                     if not connectToOpenMote(channel):
                                         return
+
+                                    restart = True
                                     continue
 
                                 # Ignore the packet if it had a wrong sequence number
                                 receivedSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
                                 if expectedSeqNr == receivedSeqNr:
-                                    expectedSeqNr += 1
-                                    if expectedSeqNr == 65536:
+                                    if expectedSeqNr == 0xffff:
                                         expectedSeqNr = 0
+                                    else:
+                                        expectedSeqNr += 1
 
                                     # Remember the index and sequence number of this packet in case the next one is corrupted
                                     lastIndex = (msg[INDEX_OFFSET] << 8) + msg[INDEX_OFFSET+1]
@@ -356,38 +412,14 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                                     # Discard packets with a bad CRC when requested
                                     if not discardPacketsWithBadCRC or msg[-1] & 128 != 0:
 
-                                        # Convert the string to a bytearray to write it to the pipe
-                                        packet = bytearray()
-                                        for character in msg[DATA_OFFSET:-2]:
-                                            packet.append(character)
+                                        # Recalculate the CRC unless the alternative FCS was requested or the CRC was invalid
+                                        if not replaceFCS and msg[-1] & 128 != 0:
+                                            crc = calcRadioCRC(msg[:-2])
+                                            msg[-2] = crc & 0xff
+                                            msg[-1] = (crc >> 8) & 0xff
 
-                                        # Recalculate CRC if it was correct and requested
-                                        if replaceFCS or msg[-1] & 128 == 0:
-                                            packet.append(msg[-2])
-                                            packet.append(msg[-1])
-                                        else:
-                                            crc = calcRadioCRC(packet)
-                                            packet.append(crc & 0xff)
-                                            packet.append(crc >> 8)
-
-                                        # Write Record Header and the packet to pipe
-                                        header = bytearray()
-                                        header.append((ts_sec >> 24) & 0xff) # timestamp seconds
-                                        header.append((ts_sec >> 16) & 0xff) # timestamp seconds
-                                        header.append((ts_sec >> 8) & 0xff)  # timestamp seconds
-                                        header.append((ts_sec >> 0) & 0xff)  # timestamp seconds
-                                        header.append((ts_usec >> 24) & 0xff) # timestamp microseconds
-                                        header.append((ts_usec >> 16) & 0xff) # timestamp microseconds
-                                        header.append((ts_usec >> 8) & 0xff)  # timestamp microseconds
-                                        header.append((ts_usec >> 0) & 0xff)  # timestamp microseconds
-                                        header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # nr of octets of packet saved
-                                        header.extend([0, 0, len(packet) >> 8, len(packet) & 0xff]) # actual length of packet
-                                        if outputIsFile:
-                                            output.write(header)
-                                            output.write(packet)
-                                        else:
-                                            win32file.WriteFile(output, header)
-                                            win32file.WriteFile(output, packet)
+                                        # Write Record Header and the packet to output
+                                        outputPacket(msg)
 
                                     # Send an ACK after enough bytes have been received
                                     unackedByteCount += len(msg)
@@ -425,13 +457,8 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
         else:
             print('ERROR: Unknown error. IOError: ' + str(e))
 
-def main():
-    global ser
-    global output
-    global outputIsFile
-    global stopSniffingThread
-    global actualSnifferTerminated
 
+def parseArguments():
     parser = argparse.ArgumentParser(description='IEEE 802.15.4 Sniffer')
     parser.add_argument('-c', '--channel', dest='channel', type=int,
                         help='Channel on which the sniffer should start listening (11-26)')
@@ -449,7 +476,17 @@ def main():
                         help='Replace the normal radio FCS by the TI CC24XX FCS which contains the RSSI and LQI')
     parser.add_argument('--keep-bad-fcs', action='store_true',
                         help='Don\'t discard packets that have a bad checksum')
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main():
+    global ser
+    global output
+    global outputIsFile
+    global stopSniffingThread
+    global actualSnifferTerminated
+
+    args = parseArguments()
 
     if args.channel != None and (args.channel < 11 or args.channel > 26):
         print('Channel should be between 11 and 26')
@@ -484,7 +521,7 @@ def main():
 
     # Test our serial connection before starting wireshark
     print('Testing serial connection...')
-    if not connectToOpenMote(args.channel, True):
+    if not connectToOpenMote(args.channel, quiet=True):
         return
     try:
         serialWrite(SerialDataType.Stop, [])
@@ -500,23 +537,7 @@ def main():
 
         print('Starting wireshark...')
         try:
-            nullOutput = open(os.devnull, 'w')
-            while True:
-                try:
-                    if platform != 'Windows':
-                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', args.pipe_name],
-                                                            stdout=nullOutput,
-                                                            stderr=nullOutput,
-                                                            preexec_fn=os.setsid)
-                    else:
-                        wiresharkProcess = subprocess.Popen([args.wireshark_executable, '-k', '-i', '\\\\.\\pipe\\' + args.pipe_name],
-                                                            stdout=nullOutput,
-                                                            stderr=nullOutput,
-                                                            creationflags=DETACHED_PROCESS)
-                    break
-                except FileNotFoundError:
-                    print('ERROR: Failed to execute "' + args.wireshark_executable + '"')
-                    args.wireshark_executable = str(INPUT('Please provide wireshark executable name: '))
+            wiresharkProcess = startWireshark(args.wireshark_executable, args.pipe_name)
         except KeyboardInterrupt:
             removePipe(args.pipe_name)
             return
@@ -546,19 +567,9 @@ def main():
         outputIsFile = True
 
     # Write the global header to the output
-    header = bytearray()
-    header.extend([0xa1, 0xb2, 0xc3, 0xd4]) # magic number
-    header.extend([0, 2]) # major version number
-    header.extend([0, 4]) # minor version number
-    header.extend([0]*4) # GMT to local correction
-    header.extend([0]*4) # accuracy of timestamps
-    header.extend([0, 0, 0xff, 0xff]) # max length of captured packets, in octets
-    header.extend([0, 0, 0, 195]) # 802.15.4 protocol
-    if outputIsFile:
-        output.write(header)
-    else:
-        win32file.WriteFile(output, header)
+    outputGlobalHeader()
 
+    # Define a function that should be called if anything goes wrong from this point onwards or when the sniffer quits
     def cleanup():
         try:
             serialWrite(SerialDataType.Stop, [])
