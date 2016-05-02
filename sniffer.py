@@ -419,7 +419,7 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                                             msg[-1] = (crc >> 8) & 0xff
 
                                         # Write Record Header and the packet to output
-                                        outputPacket(msg)
+                                        outputPacket(msg[DATA_OFFSET:])
 
                                     # Send an ACK after enough bytes have been received
                                     unackedByteCount += len(msg)
