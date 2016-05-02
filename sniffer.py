@@ -414,7 +414,7 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
 
                                         # Recalculate the CRC unless the alternative FCS was requested or the CRC was invalid
                                         if not replaceFCS and msg[-1] & 128 != 0:
-                                            crc = calcRadioCRC(msg[:-2])
+                                            crc = calcRadioCRC(msg[DATA_OFFSET:-2])
                                             msg[-2] = crc & 0xff
                                             msg[-1] = (crc >> 8) & 0xff
 
