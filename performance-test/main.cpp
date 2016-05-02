@@ -126,15 +126,15 @@ static void prvRadioSendTask(void *pvParameters)
         packetLen = 1;
     #endif
 #else
+    if (++count > 50000)
+        count = 1;
+
+    radio_buffer[0] = (count >> 8) & 0xff;
+    radio_buffer[1] = count & 0xff;
+
     #ifdef FIXED_PACKET_SIZE
         packetLen = FIXED_PACKET_SIZE;
     #else
-        if (++count > 50000)
-            count = 1;
-
-        radio_buffer[0] = (count >> 8) & 0xff;
-        radio_buffer[1] = count & 0xff;
-
         // Determine the packet length based on the phase
         switch (phase)
         {
