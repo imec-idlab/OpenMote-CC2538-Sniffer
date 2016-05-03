@@ -5,114 +5,35 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline void Serial::Send::initialize()
+#ifndef SNIFFER_SERIAL_SEND_HPP
+#define SNIFFER_SERIAL_SEND_HPP
+
+#include "sniffer_global.hpp"
+
+namespace Sniffer
 {
-    // The first byte in the transmit buffer is always the HDLC_FLAG
-    uartTxBuffer[0] = HDLC_FLAG;
-
-    // The second byte in the transmit buffer is a fixed type indicating that we are sending a packet
-    uartTxBuffer[1] = SerialDataType::Packet;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-inline void Serial::Send::serialSend()
-{
-    // Start at the beginning of the buffer when we have reached the end
-    if (buffer[bufferIndexSerialSend] == END_OF_BUFFER_BYTE)
-        bufferIndexSerialSend = 0;
-
-    // Fill the transmit buffer
-    if (buffer[bufferIndexSerialSend] <= CC2538_RF_MAX_PACKET_LEN + BUFFER_EXTRA_BYTES)
+    class SerialSend
     {
-        hdlcEncode();
-    }
-    else // This should not be possible, drop buffer
-    {
-        led_red.on();
-        bufferIndexSerialSend = bufferIndexRadio;
-        return;
-    }
+    public:
+        // Set the first two bytes of the TX buffer which are always the same
+        static void initialize();
 
-    // Send the transmit buffer over the UART
-    for (uint16_t i = 0; i < uartTxBufferLen; ++i)
-        UARTCharPut(uart.getBase(), uartTxBuffer[i]);
+        // Send one packet to the host
+        static void send();
 
-    // Move the uart buffer index
-    bufferIndexSerialSend += buffer[bufferIndexSerialSend];
+        // Signal to the host that a reset has happened (either the host requested this or the program was just started)
+        static void sendReadyPacket();
 
-    // When we didn't receive an ACK for some time we must resend packets
-    uint16_t dist = 0;
-    if (bufferIndexSerialSend > bufferIndexAcked)
-        dist = bufferIndexSerialSend - bufferIndexAcked;
-    else if (bufferIndexSerialSend < bufferIndexAcked)
-        dist = sizeof(buffer) - bufferIndexAcked + bufferIndexSerialSend;
+    private:
+        // Put the packet in an HDLC frame
+        static void hdlcEncode();
 
-    if (dist > RETRANSMIT_THRESHOLD)
-        bufferIndexSerialSend = bufferIndexAcked;
+        // Escape the byte when needed (if it equals the start/end delimiter or the escape octet)
+        static void addByteToHdlc(uint8_t byte);
 
-    // Turn on the orange led when more than 2/3th of the buffer is filled at some point
-    if (dist > sizeof(buffer) * 2/3)
-        led_orange.on();
+        // Calculate the serial CRC of the data
+        static uint16_t calculateCRC(uint8_t* beginAddress, uint8_t length);
+    };
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-inline void Serial::Send::sendReadyPacket()
-{
-    uint16_t crc = CRC_INIT;
-    crc = crcCalculationStep(SerialDataType::Ready, crc);
-    crc = crcCalculationStep(2, crc); // length = 2 (our crc bytes)
-
-    UARTCharPut(uart.getBase(), HDLC_FLAG);
-    UARTCharPut(uart.getBase(), SerialDataType::Ready);
-    UARTCharPut(uart.getBase(), 2); // length = 2 (our crc bytes)
-    UARTCharPut(uart.getBase(), (crc >> 8) & 0xFF);
-    UARTCharPut(uart.getBase(), (crc >> 0) & 0xFF);
-    UARTCharPut(uart.getBase(), HDLC_FLAG);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void Serial::Send::hdlcEncode()
-{
-    uartTxBufferLen = 2; // The first two bytes are always the same (hdlc flag and type) and are already in the buffer
-
-    // Add the lenght of the data (size of buffer block + 2 byte serial crc)
-    // The length byte from the buffer also contained itself but is not copied which is why we need to subtract 1 from the length
-    uint8_t dataLength = buffer[bufferIndexSerialSend] - 1;
-    addByteToHdlc(dataLength + 2);
-
-    // Escape the data and calculate the CRC (first byte from buffer is skipped as this contained the packet length)
-    uint16_t crc = CRC_INIT;
-    crc = crcCalculationStep(uartTxBuffer[1], crc);
-    crc = crcCalculationStep(dataLength + 2, crc);
-    for (uint8_t i = 1; i <= dataLength; ++i)
-    {
-        uint8_t& byte = buffer[bufferIndexSerialSend + i];
-
-        addByteToHdlc(byte);
-        crc = crcCalculationStep(byte, crc);
-    }
-
-    // Escape the CRC bytes
-    addByteToHdlc((crc >> 8) & 0xFF);
-    addByteToHdlc((crc >> 0) & 0xFF);
-
-    // Add the ending HDLC_FLAG byte
-    uartTxBuffer[uartTxBufferLen++] = HDLC_FLAG;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-inline void Serial::Send::addByteToHdlc(uint8_t byte)
-{
-    if (byte == HDLC_FLAG || byte == HDLC_ESCAPE)
-    {
-        uartTxBuffer[uartTxBufferLen++] = HDLC_ESCAPE;
-        uartTxBuffer[uartTxBufferLen++] = byte ^ HDLC_ESCAPE_MASK;
-    }
-    else
-        uartTxBuffer[uartTxBufferLen++] = byte;
-}
+#endif // SNIFFER_SERIAL_SEND_HPP

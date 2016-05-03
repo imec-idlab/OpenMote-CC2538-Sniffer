@@ -3,7 +3,7 @@ COPY_SNIFFER_HEX = TRUE
 
 # Project name and files to compile
 PROJECT_NAME  = sniffer
-PROJECT_FILES = main.cpp
+PROJECT_FILES = main.cpp sniffer_global.cpp sniffer_radio.cpp sniffer_serial.cpp sniffer_serial_send.cpp sniffer_serial_receive.cpp
 PROJECT_DIR   = .
 
 # Location of the root directory

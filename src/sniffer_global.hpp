@@ -5,6 +5,9 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#ifndef SNIFFER_GLOBAL_HPP
+#define SNIFFER_GLOBAL_HPP
+
 #include "Board.h"
 #include "Radio.h"
 #include "Uart.h"
@@ -127,3 +130,5 @@ extern GpioOut led_green;
 extern GpioOut led_orange;
 extern GpioOut led_red;
 extern GpioOut led_yellow;
+
+#endif // SNIFFER_GLOBAL_HPP
