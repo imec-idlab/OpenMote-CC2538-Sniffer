@@ -59,10 +59,6 @@ namespace Sniffer
 
         if (dist > RETRANSMIT_THRESHOLD)
             bufferIndexSerialSend = bufferIndexAcked;
-
-        // Turn on the orange led when more than 2/3th of the buffer is filled at some point
-        if (dist > sizeof(buffer) * 2/3)
-            led_orange.on();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
