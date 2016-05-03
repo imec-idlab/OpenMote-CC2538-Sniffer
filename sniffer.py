@@ -58,7 +58,7 @@ stopSniffingThread = False
 ser = serial.Serial()
 output = None
 outputIsFile = True
-actualSnifferTerminated = False
+snifferThreadTerminated = False
 
 
 def getSerialPortList():
@@ -316,6 +316,66 @@ def serialWriteNack(lastIndex, lastSeqNr):
                                       (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
 
 
+class PacketProcessor:
+    def __init__(self, discardPacketsWithBadCRC, replaceFCS):
+        self.discardPacketsWithBadCRC = discardPacketsWithBadCRC
+        self.replaceFCS = replaceFCS
+        self.resetVariables()
+
+    def resetVariables(self):
+        self.unackedByteCount = 0
+        self.lastIndex = 0
+        self.lastSeqNr = 0
+        self.expectedSeqNr = 0
+
+    def processPacket(self, msg):
+        if len(msg) == 0: # Message was invalid (e.g. wrong serial CRC)
+            serialWriteNack(self.lastIndex, self.lastSeqNr)
+
+        if msg[0] == SerialDataType.Ready:
+            print('WARNING: Sniffer reset detected, restarting')
+            return False
+
+        # Ignore the packet if it had a wrong sequence number
+        receivedSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
+        if self.expectedSeqNr == receivedSeqNr:
+            if self.expectedSeqNr == 0xffff:
+                self.expectedSeqNr = 0
+            else:
+                self.expectedSeqNr += 1
+
+            # Remember the index and sequence number of this packet in case the next one is corrupted
+            self.lastIndex = (msg[INDEX_OFFSET] << 8) + msg[INDEX_OFFSET+1]
+            self.lastSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
+
+            # Discard packets with a bad CRC when requested
+            if not self.discardPacketsWithBadCRC or msg[-1] & 128 != 0:
+
+                # Recalculate the CRC unless the alternative FCS was requested or the CRC was invalid
+                if not self.replaceFCS and msg[-1] & 128 != 0:
+                    crc = calcRadioCRC(msg[DATA_OFFSET:-2])
+                    msg[-2] = crc & 0xff
+                    msg[-1] = (crc >> 8) & 0xff
+
+                # Write Record Header and the packet to output
+                outputPacket(msg[DATA_OFFSET:])
+
+            # Send an ACK after enough bytes have been received
+            self.unackedByteCount += len(msg)
+            if self.unackedByteCount >= ACK_THRESHOLD and self.lastSeqNr != 0:
+                self.unackedByteCount = 0
+                serialWrite(SerialDataType.Ack, [(self.lastIndex >> 8) & 0xff, self.lastIndex & 0xff,
+                                                 (self.lastSeqNr >> 8) & 0xff, self.lastSeqNr & 0xff])
+
+        else:
+            # The sequence number should never be higher than expected (it can be lower on retransmissions)
+            if receivedSeqNr > self.expectedSeqNr:
+                print('WARNING: Received sequence number was too high')
+                serialWriteNack(self.lastIndex, self.lastSeqNr)
+
+        return True
+
+
 def connectToOpenMote(channel, quiet = False):
     ser.flushInput()
     ser.flushOutput()
@@ -332,7 +392,7 @@ def connectToOpenMote(channel, quiet = False):
             while time.time() - begin < 1:
                 c = ser.read(1)
                 if len(c) > 0:
-                    c = bytearray(c)[0] # c is always a single byte, but it was returned as an array
+                    c = bytearray(c)[0]  # c is always a single byte, but it was returned as an array
                     if not receiving:
                         if c == HDLC_FLAG:
                             receiving = True
@@ -356,25 +416,18 @@ def connectToOpenMote(channel, quiet = False):
     return False
 
 
-def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
-    global actualSnifferTerminated
+def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
+    global snifferThreadTerminated
 
-    restart = True
+    msg = bytearray()
+    receiving = False
+    packetProcessor = PacketProcessor(discardPacketsWithBadCRC, replaceFCS)
+
     try:
         while not stopSniffingThread:
-            if restart:
-                msg = bytearray()
-                unackedByteCount = 0
-                lastIndex = 0
-                lastSeqNr = 0
-                expectedSeqNr = 0
-                receiving = False
-                faultyPacketIgnored = False
-                restart = False
-
             c = ser.read(1)
             if len(c) > 0:
-                c = bytearray(c)[0]
+                c = bytearray(c)[0]  # c is always a single byte, but it was returned as an array
                 if not receiving:
                     if c == HDLC_FLAG:
                         receiving = True
@@ -387,55 +440,15 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                             print('WARNING: out of sync detected')
                         else:
                             receiving = False
-                            msg = decode(msg)
-                            if len(msg) > 0:
-                                if msg[0] == SerialDataType.Ready:
-                                    print('WARNING: Sniffer reset detected, restarting')
-                                    if not connectToOpenMote(channel):
-                                        return
+                            if not packetProcessor.processPacket(decode(msg)):
+                                # Something happened with the OpenMote, try to connect again
+                                if not connectToOpenMote(channel):
+                                    return  # Connection to OpenMote lost, terminate sniffer
 
-                                    restart = True
-                                    continue
-
-                                # Ignore the packet if it had a wrong sequence number
-                                receivedSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
-                                if expectedSeqNr == receivedSeqNr:
-                                    if expectedSeqNr == 0xffff:
-                                        expectedSeqNr = 0
-                                    else:
-                                        expectedSeqNr += 1
-
-                                    # Remember the index and sequence number of this packet in case the next one is corrupted
-                                    lastIndex = (msg[INDEX_OFFSET] << 8) + msg[INDEX_OFFSET+1]
-                                    lastSeqNr = (msg[SEQ_NR_OFFSET] << 8) + msg[SEQ_NR_OFFSET+1]
-
-                                    # Discard packets with a bad CRC when requested
-                                    if not discardPacketsWithBadCRC or msg[-1] & 128 != 0:
-
-                                        # Recalculate the CRC unless the alternative FCS was requested or the CRC was invalid
-                                        if not replaceFCS and msg[-1] & 128 != 0:
-                                            crc = calcRadioCRC(msg[DATA_OFFSET:-2])
-                                            msg[-2] = crc & 0xff
-                                            msg[-1] = (crc >> 8) & 0xff
-
-                                        # Write Record Header and the packet to output
-                                        outputPacket(msg[DATA_OFFSET:])
-
-                                    # Send an ACK after enough bytes have been received
-                                    unackedByteCount += len(msg)
-                                    if unackedByteCount >= ACK_THRESHOLD and lastSeqNr != 0:
-                                        unackedByteCount = 0
-                                        serialWrite(SerialDataType.Ack, [(lastIndex >> 8) & 0xff, lastIndex & 0xff,
-                                                                         (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
-
-                                else:
-                                    # The sequence number should never be higher than expected (it can be lower on retransmissions)
-                                    if receivedSeqNr > expectedSeqNr:
-                                        print('WARNING: Received sequence number was too high')
-                                        serialWriteNack(lastIndex, lastSeqNr)
-
-                            else: # Message was invalid (e.g. wrong CRC)
-                                serialWriteNack(lastIndex, lastSeqNr)
+                                msg = bytearray()
+                                receiving = False
+                                packetProcessor.resetVariables()
+                                continue
 
                     else: # Not the closing byte
                         msg.append(c)
@@ -447,11 +460,11 @@ def actual_sniffer(channel, discardPacketsWithBadCRC, replaceFCS):
                     serialWriteNack(lastIndex, lastSeqNr)
 
     except serial.serialutil.SerialException as e:
-        actualSnifferTerminated = True
+        snifferThreadTerminated = True
         print('ERROR: Serial error, assuming OpenMote disconnected. PySerial error: ' + str(e))
 
     except IOError as e:
-        actualSnifferTerminated = True
+        snifferThreadTerminated = True
         if e.errno == errno.EPIPE:
             print('ERROR: Pipe to wireshark is broken')
         else:
@@ -484,7 +497,7 @@ def main():
     global output
     global outputIsFile
     global stopSniffingThread
-    global actualSnifferTerminated
+    global snifferThreadTerminated
 
     args = parseArguments()
 
@@ -590,14 +603,14 @@ def main():
                 break
 
             stopSniffingThread = False
-            sniffingThread = threading.Thread(target=actual_sniffer, args=[args.channel, not args.keep_bad_fcs, args.replace_fcs])
+            sniffingThread = threading.Thread(target=snifferThread, args=[args.channel, not args.keep_bad_fcs, args.replace_fcs])
             sniffingThread.start()
 
             INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
             stopSniffingThread = True
             sniffingThread.join()
 
-            if actualSnifferTerminated:
+            if snifferThreadTerminated:
                 break
 
             # Stop the sniffer when wireshark was already closed
