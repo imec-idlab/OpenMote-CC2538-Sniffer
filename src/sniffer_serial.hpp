@@ -61,9 +61,8 @@ namespace Sniffer
 
         ////////////////////////////////////////////////////////////////////////////////////////////////
 
-        static uint8_t uartRxBuffer[SERIAL_RX_BUFFER_LEN];
-        static uint8_t uartRxBufferIndexRead;
-        static uint8_t uartRxBufferIndexWrite;
+        static volatile uint8_t uartRxBuffer[SERIAL_RX_BUFFER_LEN];
+        static volatile uint8_t uartRxBufferIndexWrite;
 
         static PlainCallback uartRxCallback;
     };
@@ -92,6 +91,8 @@ namespace Sniffer
     {
         while (true)
         {
+            uint8_t uartRxBufferIndexRead = 0;
+
             // Check if there are bytes the the UART RX buffer
             while (uartRxBufferIndexRead != uartRxBufferIndexWrite)
             {

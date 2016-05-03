@@ -15,7 +15,7 @@ namespace Sniffer
 {
     // Global variables
     uint8_t  buffer[BUFFER_LEN];
-    uint16_t bufferIndexRadio = 0;
+    volatile uint16_t bufferIndexRadio = 0;
     uint16_t bufferIndexSerialSend = 0;
     uint16_t bufferIndexAcked = 0;
     uint16_t seqNr = 0;
@@ -24,9 +24,8 @@ namespace Sniffer
     volatile tDMAControlTable Radio::uDMAChannelControlTable __attribute__((section(".udma_channel_control_table")));
 
     // Serial specific variables
-    uint8_t Serial::uartRxBuffer[SERIAL_RX_BUFFER_LEN];
-    uint8_t Serial::uartRxBufferIndexRead = 0;
-    uint8_t Serial::uartRxBufferIndexWrite = 0;
+    volatile uint8_t Serial::uartRxBuffer[SERIAL_RX_BUFFER_LEN];
+    volatile uint8_t Serial::uartRxBufferIndexWrite = 0;
     PlainCallback Serial::uartRxCallback(&Serial::Receive::uartByteReceived);
 
     uint16_t Serial::Receive::crc = CRC_INIT;

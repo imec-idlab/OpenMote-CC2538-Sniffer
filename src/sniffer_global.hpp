@@ -83,7 +83,7 @@
 namespace Sniffer
 {
     extern uint8_t  buffer[BUFFER_LEN];
-    extern uint16_t bufferIndexRadio;
+    extern volatile uint16_t bufferIndexRadio;
     extern uint16_t bufferIndexSerialSend;
     extern uint16_t bufferIndexAcked;
     extern uint16_t seqNr;
