@@ -180,8 +180,8 @@ def startWireshark(executableName, pipeName):
                                          stdout=nullOutput,
                                          stderr=nullOutput,
                                          creationflags=DETACHED_PROCESS)
-        except FileNotFoundError:
-            print('ERROR: Failed to execute "' + executableName + '"')
+        except OSError as e:
+            print('ERROR: Failed to execute "' + executableName + '". OSError: ' + str(e))
             executableName = str(INPUT('Please provide wireshark executable name: '))
 
 
