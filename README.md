@@ -28,7 +28,7 @@ If the OpenMote is connected to the PC with a OpenBase then just run the flash-b
 python flash-bsl.py
 ```
 
-If you get the message "ERROR: Can't connect to target. Ensure boot loader is started." then you will have to enter the Bootloader Backdoor first. Try pressing the RESET button while the ON/SLEEP pin on the OpenBase is connected to GND.
+If you get the message `ERROR: Can't connect to target. Ensure boot loader is started.` then you will have to enter the Bootloader Backdoor first. If the software that is already flashed on the OpenMote supports it (e.g. this sniffer or a OpenWSN program) then you should be able to do this by just pressing the USER button. If all leds turned on after doing this and it still gives this error then press RESET and try again. If the USER button was not configured to flash the OpenMote then you will have to press the RESET button while the ON/SLEEP pin on the OpenBase is connected to the GND pin.
 
 ## Running the sniffer
 Now that the peripheral is running the required software, it is time to run a host program that communicates with it over the USB cable (which is acting as a serial port).
