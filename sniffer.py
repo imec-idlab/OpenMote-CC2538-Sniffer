@@ -316,6 +316,13 @@ def serialWriteNack(lastIndex, lastSeqNr):
                                       (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
 
 
+def serialWriteStop():
+    try:
+        serialWrite(SerialDataType.Stop, [])
+    except:
+        pass
+
+
 class PacketProcessor:
     def __init__(self, discardPacketsWithBadCRC, replaceFCS):
         self.discardPacketsWithBadCRC = discardPacketsWithBadCRC
@@ -331,6 +338,7 @@ class PacketProcessor:
     def processPacket(self, msg):
         if len(msg) == 0: # Message was invalid (e.g. wrong serial CRC)
             serialWriteNack(self.lastIndex, self.lastSeqNr)
+            return True
 
         if msg[0] == SerialDataType.Ready:
             print('WARNING: Sniffer reset detected, restarting')
@@ -460,10 +468,12 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
                     serialWriteNack(lastIndex, lastSeqNr)
 
     except serial.serialutil.SerialException as e:
+        serialWriteStop()
         snifferThreadTerminated = True
         print('ERROR: Serial error, assuming OpenMote disconnected. PySerial error: ' + str(e))
 
     except IOError as e:
+        serialWriteStop()
         snifferThreadTerminated = True
         if e.errno == errno.EPIPE:
             print('ERROR: Pipe to wireshark is broken')
@@ -536,10 +546,7 @@ def main():
     print('Testing serial connection...')
     if not connectToOpenMote(args.channel, quiet=True):
         return
-    try:
-        serialWrite(SerialDataType.Stop, [])
-    except:
-        pass
+    serialWriteStop()
 
     # Start wireshark when needed
     wiresharkProcess = None
@@ -584,10 +591,7 @@ def main():
 
     # Define a function that should be called if anything goes wrong from this point onwards or when the sniffer quits
     def cleanup():
-        try:
-            serialWrite(SerialDataType.Stop, [])
-        except:
-            pass
+        serialWriteStop()
 
         if outputIsFile:
             output.close()
