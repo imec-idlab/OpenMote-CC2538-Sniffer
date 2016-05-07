@@ -31,19 +31,18 @@ namespace Sniffer
         if (buffer[bufferIndexSerialSend] == END_OF_BUFFER_BYTE)
             bufferIndexSerialSend = 0;
 
-        // Fill the transmit buffer
-        if (buffer[bufferIndexSerialSend] <= CC2538_RF_MAX_PACKET_LEN + BUFFER_EXTRA_BYTES)
-        {
-            hdlcEncode();
-        }
-        else // This should not be possible, drop buffer
+        // Check if the length byte is valid
+        if ((buffer[bufferIndexSerialSend] > CC2538_RF_MAX_PACKET_LEN + BUFFER_EXTRA_BYTES)
+         || (bufferIndexSerialSend + buffer[bufferIndexSerialSend] >= sizeof(buffer)))
         {
             led_red.on();
             bufferIndexSerialSend = bufferIndexRadio;
+            bufferIndexAcked = bufferIndexSerialSend;
             return;
         }
 
-        // Send the transmit buffer over the UART
+        // Fill the transmit buffer and send it over the UART
+        hdlcEncode();
         for (uint16_t i = 0; i < uartTxBufferLen; ++i)
             UARTCharPut(uart.getBase(), uartTxBuffer[i]);
 

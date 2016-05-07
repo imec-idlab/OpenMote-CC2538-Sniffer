@@ -86,7 +86,7 @@ namespace Sniffer
         // Full length is the packet including FCS plus 5 extra bytes that we store (length byte + 2 byte index + 2 byte seq nr)
         const uint8_t fullPacketLength = packetLength + BUFFER_EXTRA_BYTES;
 
-        // The index must never pass the ack index, otherwise we may lose a packet when a NACK comes in
+        // The radio index must never pass the ack index
         if (((bufferIndexRadio + fullPacketLength >= sizeof(buffer))
           && ((bufferIndexAcked > bufferIndexRadio) || (bufferIndexAcked <= fullPacketLength)))
          || ((bufferIndexRadio + fullPacketLength < sizeof(buffer))

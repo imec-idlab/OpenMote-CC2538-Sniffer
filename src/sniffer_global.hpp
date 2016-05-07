@@ -24,11 +24,11 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define BUFFER_LEN                  8960    // Size of buffer in which packets are stored that have been received on the radio
+#define BUFFER_LEN                  8500    // Size of buffer in which packets are stored that have been received on the radio
 #define RETRANSMIT_THRESHOLD        1500    // After how many unacknowledged bytes we will retransmit the buffer contents to the pc
 #define SERIAL_RX_BUFFER_LEN        128     // How long is the buffer for incoming serial messages
 #define SERIAL_RX_MAX_MESSAGE_LEN   8       // The maximum length of an incoming serial message
-#define BAUDRATE                    921600  // The baudrate for the UART to communicate with the pc
+#define BAUDRATE                    460800  // The baudrate for the UART to communicate with the pc
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -76,10 +76,11 @@
 
 // The size of the TX buffer is defined by what is needed to pass the largest possible radio packet.
 // Together with the radio packet, 4 extra bytes (2 byte index and 2 byte sequence number) are send.
-// We need twice as much space in case each character would have to be escaped.
-// We alse need to reserve 4 bytes for the type, length and begin and end bytes.
+// There are 2 bytes in front of this which are the type and length bytes. At the end a 2 bytes serial CRC is added.
+// This whole thing has to be multiplied by 2 as we need twice as much space in case each character would have to be escaped.
+// Finally one start and one end byte is added around this data.
 #define SERIAL_TX_BUFFER_EXTRA_BYTES   4
-#define SERIAL_TX_BUFFER_SIZE          ((CC2538_RF_MAX_PACKET_LEN + SERIAL_TX_BUFFER_EXTRA_BYTES) * 2) + 4
+#define SERIAL_TX_BUFFER_SIZE          (1 + ((2 + (CC2538_RF_MAX_PACKET_LEN + SERIAL_TX_BUFFER_EXTRA_BYTES) + 2) * 2) + 1)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 

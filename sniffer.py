@@ -34,7 +34,7 @@ else:
     INPUT = raw_input
 
 
-BAUDRATE      = 921600
+BAUDRATE      = 460800
 ACK_THRESHOLD = 300
 
 INDEX_OFFSET  = 2
@@ -311,6 +311,11 @@ def serialWrite(dataType, msg):
     ser.write(encode(data))
 
 
+def serialWriteAck(lastIndex, lastSeqNr):
+    serialWrite(SerialDataType.Ack, [(lastIndex >> 8) & 0xff, lastIndex & 0xff,
+                                     (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
+
+
 def serialWriteNack(lastIndex, lastSeqNr):
     serialWrite(SerialDataType.Nack, [(lastIndex >> 8) & 0xff, lastIndex & 0xff,
                                       (lastSeqNr >> 8) & 0xff, lastSeqNr & 0xff])
@@ -334,6 +339,12 @@ class PacketProcessor:
         self.lastIndex = 0
         self.lastSeqNr = 0
         self.expectedSeqNr = 0
+        self.retransmission = False
+
+    def serialWriteAck(self):
+        if self.unackedByteCount >= ACK_THRESHOLD:
+            self.unackedByteCount = 0
+            serialWriteAck(self.lastIndex, self.lastSeqNr)
 
     def processPacket(self, msg):
         if len(msg) == 0: # Message was invalid (e.g. wrong serial CRC)
@@ -351,6 +362,8 @@ class PacketProcessor:
                 self.expectedSeqNr = 0
             else:
                 self.expectedSeqNr += 1
+
+            self.retransmission = False
 
             # Remember the index and sequence number of this packet in case the next one is corrupted
             self.lastIndex = (msg[INDEX_OFFSET] << 8) + msg[INDEX_OFFSET+1]
@@ -370,16 +383,24 @@ class PacketProcessor:
 
             # Send an ACK after enough bytes have been received
             self.unackedByteCount += len(msg)
-            if self.unackedByteCount >= ACK_THRESHOLD and self.lastSeqNr != 0:
-                self.unackedByteCount = 0
-                serialWrite(SerialDataType.Ack, [(self.lastIndex >> 8) & 0xff, self.lastIndex & 0xff,
-                                                 (self.lastSeqNr >> 8) & 0xff, self.lastSeqNr & 0xff])
+            self.serialWriteAck()
 
         else:
             # The sequence number should never be higher than expected (it can be lower on retransmissions)
             if receivedSeqNr > self.expectedSeqNr:
                 print('WARNING: Received sequence number was too high')
                 serialWriteNack(self.lastIndex, self.lastSeqNr)
+            else:
+                # The OpenMote is retransmitting stuff that we already have, so send an ACK to inform it about this
+                if self.retransmission:
+                    # If we already noticed it then only send an ACK every few packets
+                    self.unackedByteCount += len(msg)
+                    self.serialWriteAck()
+                else:
+                    # If this is the first retransmitted packet then immediately send an ACK
+                    self.retransmission = True
+                    self.unackedByteCount = ACK_THRESHOLD
+                    self.serialWriteAck()
 
         return True
 
@@ -465,7 +486,7 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
                 if receiving:
                     receiving = False
                     print('WARNING: expected another byte, assuming out of sync')
-                    serialWriteNack(lastIndex, lastSeqNr)
+                    serialWriteNack(packetProcessor.lastIndex, packetProcessor.lastSeqNr)
 
     except serial.serialutil.SerialException as e:
         serialWriteStop()

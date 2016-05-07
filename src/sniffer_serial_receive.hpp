@@ -31,6 +31,7 @@ namespace Sniffer
         static void receivedNACK();
         static void receivedRESET();
         static void receivedSTOP();
+        static void receivedInvalidMessage();
         static bool checkReceivedIndexAndSeqNr(uint16_t receivedIndex, uint16_t receivedSeqNr);
     };
 }

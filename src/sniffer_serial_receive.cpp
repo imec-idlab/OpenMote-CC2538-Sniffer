@@ -26,7 +26,9 @@ namespace Sniffer
     void SerialReceive::uartByteReceived()
     {
         uartRxBuffer[uartRxBufferIndexWrite] = uart.readByte();
-        if (++uartRxBufferIndexWrite == sizeof(uartRxBuffer))
+
+        uartRxBufferIndexWrite++;
+        if (uartRxBufferIndexWrite == sizeof(uartRxBuffer))
             uartRxBufferIndexWrite = 0;
     }
 
@@ -106,11 +108,6 @@ namespace Sniffer
                     // Find out what message we received and act acordingly
                     validMessage = decodeReceivedMessage();
                 }
-                else // This should not be possible, start retransmitting
-                {
-                    led_orange.on();
-                    bufferIndexSerialSend = bufferIndexAcked;
-                }
             }
         }
 
@@ -188,11 +185,8 @@ namespace Sniffer
             // Keep track of the last received index
             previousReceivedIndex = receivedIndex;
         }
-        else // This should not be possible, start retransmitting
-        {
-            led_orange.on();
-            bufferIndexSerialSend = bufferIndexAcked;
-        }
+        else
+            receivedInvalidMessage();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -223,11 +217,8 @@ namespace Sniffer
             // Keep track of the last received index
             previousReceivedIndex = receivedIndex;
         }
-        else // This should not be possible, start retransmitting
-        {
-            led_orange.on();
-            bufferIndexSerialSend = bufferIndexAcked;
-        }
+        else
+            receivedInvalidMessage();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -288,18 +279,35 @@ namespace Sniffer
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    inline void SerialReceive::receivedInvalidMessage()
+    {
+        led_orange.on();
+        bufferIndexSerialSend = bufferIndexAcked;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
     inline bool SerialReceive::checkReceivedIndexAndSeqNr(uint16_t receivedIndex, uint16_t receivedSeqNr)
     {
+        // Caching the radio buffer is required because we do two if checks directly after each other.
+        // If a radio interrupt occurred exactly between these lines and it would move the radio index from
+        // the end to the beginning of the buffer then the received index would be incorrectly discarted.
+        // Caching it has no influence because the received index has to be smaller than the old radio index.
+        // The radio index can never pass the acked index so an up-to-date radio index is not relevant in these checks.
+        uint16_t cachedBufferIndexRadio = bufferIndexRadio;
+
         if (receivedIndex >= sizeof(buffer))
-            return false;
-        else if (bufferIndexAcked > bufferIndexSerialSend) // around end and start of buffer
         {
-            if ((receivedIndex < bufferIndexAcked) && (receivedIndex > bufferIndexSerialSend))
+            return false;
+        }
+        else if (bufferIndexAcked > cachedBufferIndexRadio) // around end and start of buffer
+        {
+            if ((receivedIndex < bufferIndexAcked) && (receivedIndex > cachedBufferIndexRadio))
                 return false;
         }
-        else // if (bufferIndexAcked <= bufferIndexSerialSend)
+        else // if (bufferIndexAcked <= cachedBufferIndexRadio)
         {
-            if ((receivedIndex < bufferIndexAcked) || (receivedIndex > bufferIndexSerialSend))
+            if ((receivedIndex < bufferIndexAcked) || (receivedIndex > cachedBufferIndexRadio))
                 return false;
         }
 
