@@ -102,13 +102,11 @@ uint32_t RadioTimer::sleep(void)
 
 void RadioTimer::wakeup(uint32_t ticks)
 {
-    uint32_t current_before, current_after, period, counter;
+    uint32_t current_after, period, counter;
     int32_t delta;
 
     period = getPeriod();
     counter = getCounter();
-
-    current_before = getCounter();
 
     setCounter(counter + ticks);
 
