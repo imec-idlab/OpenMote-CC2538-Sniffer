@@ -17,15 +17,13 @@ ENTRY(reset_handler)
  * Linker script for Texas Instruments CC2538SF53 (32K RAM, 512K Flash)
  * FLASH stores the program code
  * FLASH_CCA stores the backdoor bootloader configuration
- * SRAM1 is 16K NO-RETENTION and SRAM2 is 16K RETENTION
- * Currently we are only using SRAM2 with RETENTION
+ * SRAM consists of 16K NO-RETENTION and 16K RETENTION
  */
 MEMORY
 {
     FLASH     (RX)  : ORIGIN = 0x00200000, LENGTH = 512K
     FLASH_CCA (RX)  : ORIGIN = 0x0027FFD4, LENGTH = 44
-    SRAM1     (RWX) : ORIGIN = 0x20000000, LENGTH = 16K
-    SRAM2     (RWX) : ORIGIN = 0x20004000, LENGTH = 16K
+    SRAM      (RWX) : ORIGIN = 0x20000000, LENGTH = 32K
 }
 
 SECTIONS
@@ -84,14 +82,14 @@ SECTIONS
     .socdata (NOLOAD) :
     {
         *(.udma_channel_control_table)
-    } > SRAM2
+    } > SRAM
 
     /* Holds the stack at the start of SRAM */
     .stack (NOLOAD) :
     {
         . = ALIGN(4);
         KEEP(*(.stack))
-    } > SRAM2
+    } > SRAM
 
     /* Holds variables stored in FLASH and copied to SRAM upon initialization */
     .data :
@@ -102,7 +100,7 @@ SECTIONS
         *(vtable)
         *(.data*)
         _data_end = .;
-    } > SRAM2 AT > FLASH
+    } > SRAM AT > FLASH
 
     /* Holds unitialized variables stored in RAM */
     .bss :
@@ -112,7 +110,7 @@ SECTIONS
         *(.bss*)
         *(COMMON)
         _bss_end = .;
-    } > SRAM2
+    } > SRAM
 
     /* Hods the CCA section of the CC2538 */
     .flashcca :

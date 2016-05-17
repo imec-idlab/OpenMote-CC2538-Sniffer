@@ -20,9 +20,6 @@ namespace Sniffer
 
         // Task which handles sending and receiving over UART, which is run the whole time when no interrupts are being executed
         static void serialTask(void*);
-
-    private:
-        static PlainCallback uartRxCallback;
     };
 }
 

@@ -35,9 +35,12 @@ namespace Sniffer
         if ((buffer[bufferIndexSerialSend] > CC2538_RF_MAX_PACKET_LEN + BUFFER_EXTRA_BYTES)
          || (bufferIndexSerialSend + buffer[bufferIndexSerialSend] >= sizeof(buffer)))
         {
-            led_red.on();
-            bufferIndexSerialSend = bufferIndexRadio;
-            bufferIndexAcked = bufferIndexSerialSend;
+            // Something unknown went terribly wrong, reset the sniffer and continue sniffing
+            reset(); // disable radio interrupts and reset global variables
+            led_red.on(); // indicate that we are no longer lossless
+            SerialSend::sendReadyPacket(); // tell the pc that the sequence number count restarted
+            IntEnable(INT_RFCORERTX); // re-enable radio interrupts
+            CC2538_RF_CSP_ISRXON(); // turn radio back on in receiving mode
             return;
         }
 

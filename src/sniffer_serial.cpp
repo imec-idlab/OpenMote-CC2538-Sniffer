@@ -11,10 +11,6 @@
 
 namespace Sniffer
 {
-    PlainCallback Serial::uartRxCallback(&SerialReceive::uartByteReceived);
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////
-
     void Serial::initialize()
     {
         // Enable the UART
@@ -24,9 +20,8 @@ namespace Sniffer
         SerialSend::initialize();
         SerialSend::sendReadyPacket();
 
-        // Enable the receive interrupt
-        uart.setRxCallback(&uartRxCallback);
-        uart.enableInterrupts();
+        // Enable the byte received interrupt
+        SerialReceive::initialize();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////

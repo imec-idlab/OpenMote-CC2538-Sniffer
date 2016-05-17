@@ -7,7 +7,7 @@
 
 /*
 #define MAX_PERFORMANCE
-#define FIXED_PACKET_SIZE   1
+#define FIXED_PACKET_SIZE   125
 */
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -222,21 +222,13 @@ static void prvRadioSendTask(void *pvParameters)
         HWREG(RFCORE_SFR_RFDATA) = packetLen+2;
 
         // Append the packet payload to the TX buffer
-        if (packetLen < 3)
-        {
-            for (uint8_t i = 0; i < packetLen; i++)
-                HWREG(RFCORE_SFR_RFDATA) = radio_buffer[i];
-        }
-        else
-        {
-            uDMAChannelControlTable.pvSrcEndAddr = (void*)&radio_buffer[packetLen-1];
-            uDMAChannelControlTable.ui32Control &= ~(UDMACHCTL_CHCTL_XFERSIZE_M | UDMACHCTL_CHCTL_XFERMODE_M);
-            uDMAChannelControlTable.ui32Control |= UDMA_MODE_AUTO | ((packetLen-1) << 4);
-            HWREG(UDMA_ENASET) = 1;
-            HWREG(UDMA_SWREQ) = 1;
-            while (HWREG(UDMA_ENASET))
-                ;
-        }
+        uDMAChannelControlTable.pvSrcEndAddr = (void*)&radio_buffer[packetLen-1];
+        uDMAChannelControlTable.ui32Control &= ~(UDMACHCTL_CHCTL_XFERSIZE_M | UDMACHCTL_CHCTL_XFERMODE_M);
+        uDMAChannelControlTable.ui32Control |= UDMA_MODE_AUTO | ((packetLen-1) << 4);
+        HWREG(UDMA_ENASET) = 1;
+        HWREG(UDMA_SWREQ) = 1;
+        while (HWREG(UDMA_ENASET))
+            ;
 
         led_red.on();
 
@@ -257,15 +249,12 @@ static void prvRadioSendTask(void *pvParameters)
 
 int main (void)
 {
-    for (unsigned int i = 0; i < 26; ++i)
-        radio_buffer[i] = 'A' + i;
-    for (unsigned int i = 0; i < 26; ++i)
-        radio_buffer[26+i] = 'a' + i;
-    for (unsigned int i = 0; i < 10; ++i)
-        radio_buffer[52+i] = '0' + i;
-    for (unsigned int i = 0; i < 62; ++i)
-        radio_buffer[62+i] = radio_buffer[i];
-    radio_buffer[124] = '!';
+    // Fill the buffer with numbers larger than the possible length byte on the sniffer
+    // If a pointer on the sniffer would point to the wrong byte it should be detected immediately
+    for (unsigned int i = 0; i < 60; ++i)
+        radio_buffer[i] = 140+i;
+    for (unsigned int i = 0; i < 65; ++i)
+        radio_buffer[60+i] = 140+i;
 
     board.enableFlashErase();
 

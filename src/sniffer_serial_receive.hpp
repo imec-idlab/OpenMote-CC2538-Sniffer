@@ -15,6 +15,9 @@ namespace Sniffer
     class SerialReceive
     {
     public:
+        // Enable UART interrupt
+        static void initialize();
+
         // Interrupt handler for UART
         static void uartByteReceived();
 

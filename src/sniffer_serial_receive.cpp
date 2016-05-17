@@ -17,9 +17,19 @@ namespace Sniffer
     uint8_t  messageLen = 0;
     uint16_t previousReceivedIndex = INVALID_RECEIVED_INDEX;
 
-    static volatile uint8_t uartRxBuffer[SERIAL_RX_BUFFER_LEN];
-    static volatile uint8_t uartRxBufferIndexWrite = 0;
-    static volatile uint8_t uartRxBufferIndexRead = 0;
+    volatile uint8_t uartRxBuffer[SERIAL_RX_BUFFER_LEN];
+    volatile uint8_t uartRxBufferIndexWrite = 0;
+    uint8_t uartRxBufferIndexRead = 0;
+
+    PlainCallback uartRxCallback(&SerialReceive::uartByteReceived);
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    void SerialReceive::initialize()
+    {
+        uart.setRxCallback(&uartRxCallback);
+        uart.enableInterrupts();
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -108,6 +118,8 @@ namespace Sniffer
                     // Find out what message we received and act acordingly
                     validMessage = decodeReceivedMessage();
                 }
+                else
+                    led_orange.on();
             }
         }
 
@@ -160,7 +172,10 @@ namespace Sniffer
         else if ((message[0] == SerialDataType::Stop) && (message[1] == STOP_MESSAGE_LENGTH))
             receivedSTOP();
         else
+        {
+            led_orange.on();
             return false;
+        }
 
         return true;
     }
@@ -176,11 +191,20 @@ namespace Sniffer
         if (previousReceivedIndex == receivedIndex)
             return;
 
-        // Validate the received index which has to lie within the unacked area and make sure the sequence number matches with it
+        // Validate the received index which has to lie within the unacked area and verify the related sequence number
         if (checkReceivedIndexAndSeqNr(receivedIndex, receivedSeqNr))
         {
             // Move the acked index forward
-            bufferIndexAcked = receivedIndex + buffer[receivedIndex];
+            // When passing the serial index we must move it forward as well
+            uint16_t newBufferIndexAcked = receivedIndex + buffer[receivedIndex];
+            if (((newBufferIndexAcked < bufferIndexAcked)
+              && (bufferIndexSerialSend >= bufferIndexAcked || bufferIndexSerialSend < newBufferIndexAcked))
+             || ((newBufferIndexAcked > bufferIndexAcked)
+              && (bufferIndexSerialSend >= bufferIndexAcked && bufferIndexSerialSend < newBufferIndexAcked)))
+            {
+                bufferIndexSerialSend = newBufferIndexAcked;
+            }
+            bufferIndexAcked = newBufferIndexAcked;
 
             // Keep track of the last received index
             previousReceivedIndex = receivedIndex;
@@ -196,22 +220,22 @@ namespace Sniffer
         uint16_t receivedIndex = readUint16(message, NACK_INDEX_OFFSET);
         uint16_t receivedSeqNr = readUint16(message, NACK_SEQNR_OFFSET);
 
-        // Validate the received index which has to lie within the unacked area or be the same as in the last ACK/NACK
-        bool validIndex;
+        // Start retransmitting when another NACK was received with the same sequence number as before.
+        // The received index may lie behind the acked index which means that the bytes may
+        // have been overwritten already if the buffer was practically full.
+        // We thus can't trust the length byte from the buffer and must handle this case differently.
         if (previousReceivedIndex == receivedIndex)
-            validIndex = true;
-        else
-            validIndex = checkReceivedIndexAndSeqNr(receivedIndex, receivedSeqNr);
-
-        if (validIndex)
         {
-            // Move the acked index forward (start from beginning again when reaching the end of the buffer)
+            bufferIndexSerialSend = bufferIndexAcked;
+            return;
+        }
+
+        // Validate the received index which has to lie within the unacked area and verify the related sequence number
+        if (checkReceivedIndexAndSeqNr(receivedIndex, receivedSeqNr))
+        {
+            // Move the acked index forward and resend everything that the host hasn't received yet
             uint8_t packetLength = buffer[receivedIndex];
             bufferIndexAcked = receivedIndex + packetLength;
-            if (buffer[bufferIndexAcked] == END_OF_BUFFER_BYTE)
-                bufferIndexAcked = 0;
-
-            // Resend everything up to the last acked packet
             bufferIndexSerialSend = bufferIndexAcked;
 
             // Keep track of the last received index
@@ -225,20 +249,7 @@ namespace Sniffer
 
     inline void SerialReceive::receivedRESET()
     {
-        // Disable radio interrupts while resetting values
-        IntDisable(INT_RFCORERTX);
-
-        // Turn off warning lights
-        led_green.on();
-        led_yellow.off();
-        led_orange.off();
-        led_red.off();
-
-        // Empty buffer and reset sequence number
-        bufferIndexRadio = 0;
-        bufferIndexSerialSend = 0;
-        bufferIndexAcked = 0;
-        seqNr = 0;
+        reset();
 
         // Verify that the received channel is within the correct range
         uint8_t channel = message[RESET_CHANNEL_OFFSET];
@@ -249,9 +260,9 @@ namespace Sniffer
 
             // Send the READY message
             SerialSend::sendReadyPacket();
+            led_green.on();
 
             // Allow new radio packets now
-            CC2538_RF_CSP_ISFLUSHRX();
             IntEnable(INT_RFCORERTX);
             CC2538_RF_CSP_ISRXON();
         }
@@ -261,20 +272,7 @@ namespace Sniffer
 
     inline void SerialReceive::receivedSTOP()
     {
-        // Disable radio interrupts and clear the radio buffer
-        IntDisable(INT_RFCORERTX);
-        CC2538_RF_CSP_ISFLUSHRX();
-
-        led_green.off();
-        led_yellow.off();
-        led_orange.off();
-        led_red.off();
-
-        // Empty buffer and reset sequence number
-        bufferIndexRadio = 0;
-        bufferIndexSerialSend = 0;
-        bufferIndexAcked = 0;
-        seqNr = 0;
+        reset();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -302,18 +300,28 @@ namespace Sniffer
         }
         else if (bufferIndexAcked > cachedBufferIndexRadio) // around end and start of buffer
         {
-            if ((receivedIndex < bufferIndexAcked) && (receivedIndex > cachedBufferIndexRadio))
+            if ((receivedIndex < bufferIndexAcked) && (receivedIndex + buffer[receivedIndex] > cachedBufferIndexRadio))
                 return false;
         }
         else // if (bufferIndexAcked <= cachedBufferIndexRadio)
         {
-            if ((receivedIndex < bufferIndexAcked) || (receivedIndex > cachedBufferIndexRadio))
+            if ((receivedIndex < bufferIndexAcked) || (receivedIndex + buffer[receivedIndex] > cachedBufferIndexRadio))
                 return false;
         }
 
+        // Check to make sure that the sequence number in the buffer matches
         uint16_t seqNrInBuffer = readUint16(buffer, receivedIndex + BUFFER_SEQNR_OFFSET);
-
         if (seqNrInBuffer != receivedSeqNr)
+            return false;
+
+        // The index can never be too far away
+        uint16_t dist = 0;
+        if (receivedIndex > bufferIndexAcked)
+            dist = receivedIndex - bufferIndexAcked;
+        else if (receivedIndex < bufferIndexAcked)
+            dist = sizeof(buffer) - bufferIndexAcked + receivedIndex;
+
+        if (dist > RETRANSMIT_THRESHOLD + CC2538_RF_MAX_PACKET_LEN + BUFFER_EXTRA_BYTES)
             return false;
 
         return true;

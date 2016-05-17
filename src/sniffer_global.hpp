@@ -24,11 +24,11 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define BUFFER_LEN                  8500    // Size of buffer in which packets are stored that have been received on the radio
-#define RETRANSMIT_THRESHOLD        1500    // After how many unacknowledged bytes we will retransmit the buffer contents to the pc
-#define SERIAL_RX_BUFFER_LEN        128     // How long is the buffer for incoming serial messages
+#define BUFFER_LEN                  24000   // Size of buffer in which packets are stored that have been received on the radio
+#define RETRANSMIT_THRESHOLD        10000   // After how many unacknowledged bytes we will retransmit the buffer contents to the pc
+#define SERIAL_RX_BUFFER_LEN        256     // How long is the buffer for incoming serial messages
 #define SERIAL_RX_MAX_MESSAGE_LEN   8       // The maximum length of an incoming serial message
-#define BAUDRATE                    460800  // The baudrate for the UART to communicate with the pc
+#define BAUDRATE                    921600  // The baudrate for the UART to communicate with the pc
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -92,6 +92,8 @@ namespace Sniffer
     extern uint16_t bufferIndexAcked;
     extern uint16_t seqNr;
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
     namespace SerialDataType
     {
         enum SerialDataTypes
@@ -105,15 +107,26 @@ namespace Sniffer
         };
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // Disable radio interrupts, reset global variables and turn off all leds
+    void reset();
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
     inline uint16_t crcCalculationStep(uint8_t byte, uint16_t crc)
     {
         return crc16_table[byte ^ (uint8_t)(crc >> 8)] ^ (crc << 8);
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
     inline uint16_t readUint16(uint8_t buf[], uint16_t index)
     {
         return (buf[index] << 8) + buf[index+1];
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
 
     inline void writeUint16(uint8_t buf[], uint16_t index, uint16_t value)
     {

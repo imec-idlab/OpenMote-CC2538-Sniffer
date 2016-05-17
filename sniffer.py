@@ -34,12 +34,13 @@ else:
     INPUT = raw_input
 
 
-BAUDRATE      = 460800
-ACK_THRESHOLD = 300
+BAUDRATE          = 921600
+ACK_THRESHOLD     = 300
+SERIAL_TIMEOUT    = 0.3
 
-INDEX_OFFSET  = 2
-SEQ_NR_OFFSET = 4
-DATA_OFFSET   = 6
+INDEX_OFFSET      = 2
+SEQ_NR_OFFSET     = 4
+DATA_OFFSET       = 6
 
 HDLC_FLAG        = 0x7E
 HDLC_ESCAPE      = 0x7D
@@ -346,6 +347,11 @@ class PacketProcessor:
             self.unackedByteCount = 0
             serialWriteAck(self.lastIndex, self.lastSeqNr)
 
+    def ackUnackedBytes(self):
+        if self.unackedByteCount > 0:
+            self.unackedByteCount = ACK_THRESHOLD
+            self.serialWriteAck()
+
     def processPacket(self, msg):
         if len(msg) == 0: # Message was invalid (e.g. wrong serial CRC)
             serialWriteNack(self.lastIndex, self.lastSeqNr)
@@ -386,9 +392,8 @@ class PacketProcessor:
             self.serialWriteAck()
 
         else:
-            # The sequence number should never be higher than expected (it can be lower on retransmissions)
+            # If the sequence number is higher than expected then tell the sniffer that we are missing something
             if receivedSeqNr > self.expectedSeqNr:
-                print('WARNING: Received sequence number was too high')
                 serialWriteNack(self.lastIndex, self.lastSeqNr)
             else:
                 # The OpenMote is retransmitting stuff that we already have, so send an ACK to inform it about this
@@ -458,11 +463,12 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
             if len(c) > 0:
                 c = bytearray(c)[0]  # c is always a single byte, but it was returned as an array
                 if not receiving:
-                    if c == HDLC_FLAG:
-                        receiving = True
-                        msg = bytearray()
-                    else:
-                        print('WARNING: byte dropped')
+                    if c != HDLC_FLAG:
+                        print('WARNING: encountered unexpected byte, assuming out of sync')
+
+                    receiving = True
+                    msg = bytearray()
+
                 else:
                     if c == HDLC_FLAG:
                         if len(msg) == 0:
@@ -487,6 +493,9 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
                     receiving = False
                     print('WARNING: expected another byte, assuming out of sync')
                     serialWriteNack(packetProcessor.lastIndex, packetProcessor.lastSeqNr)
+                else:
+                    # We haven't received any new packets for a moment, if there are still unacked bytes, acknowledge them now
+                    packetProcessor.ackUnackedBytes()
 
     except serial.serialutil.SerialException as e:
         serialWriteStop()
@@ -552,7 +561,7 @@ def main():
                             xonxoff  = False,
                             rtscts   = False,
                             dsrdtr   = False,
-                            timeout   = 0.25)
+                            timeout  = SERIAL_TIMEOUT)
     except serial.serialutil.SerialException as e:
         print('ERROR: Could not connect to serial port. PySerial error: ' + str(e))
         return
