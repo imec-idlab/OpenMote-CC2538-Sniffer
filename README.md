@@ -72,3 +72,14 @@ sudo gpasswd -a $USER dialout
 ```
 
 Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a second and try again.
+
+### Windows: latency
+The default serial settings on Windows cause relatively large delays in the communication. The buffer in the OpenMote is large enough to handle these delays, but when sniffing with very high network load, any extra delay (e.g. waiting longer on the hard drive when writing to a pcap file) can cause the buffer to get full and some packets to be dropped. In order to reduce the latency, a small change is required in the settings of the COM port.
+
+1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
+2. Right click and select "Properties"
+3. Select the "Port Settings" tab
+4. Click the "Advanced" button at the bottom
+5. Change the Latency Timer (msec) to 1
+6. Change the USB Transfer Sizes to 64
+7. Save (and reboot)
