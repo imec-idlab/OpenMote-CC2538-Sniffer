@@ -463,12 +463,12 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
             if len(c) > 0:
                 c = bytearray(c)[0]  # c is always a single byte, but it was returned as an array
                 if not receiving:
-                    if c != HDLC_FLAG:
-                        print('WARNING: encountered unexpected byte, assuming out of sync')
-
                     receiving = True
                     msg = bytearray()
 
+                    if c != HDLC_FLAG:
+                        print('WARNING: encountered unexpected byte, assuming out of sync')
+                        msg.append(c)
                 else:
                     if c == HDLC_FLAG:
                         if len(msg) == 0:
