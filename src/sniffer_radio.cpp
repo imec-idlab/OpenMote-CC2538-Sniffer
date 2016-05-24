@@ -43,14 +43,9 @@ namespace Sniffer
         IntPendClear(INT_RFCORERTX);
         HWREG(RFCORE_SFR_RFIRQF0) = 0;
 
-        // Check for start of frame interrupt
-        if ((irq_status0 & RFCORE_SFR_RFIRQF0_SFD) == RFCORE_SFR_RFIRQF0_SFD)
-        {
-            led_yellow.on();
-        }
-
         // Check for end of frame interrupt
-        else if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) == RFCORE_SFR_RFIRQF0_RXPKTDONE)
+        // We have to check for this one first in case both SFD and RXPKTDONE interrupts occur at once
+        if ((irq_status0 & RFCORE_SFR_RFIRQF0_RXPKTDONE) == RFCORE_SFR_RFIRQF0_RXPKTDONE)
         {
             // Make sure the packet length is valid
             uint8_t packetLength = HWREG(RFCORE_SFR_RFDATA);
@@ -63,6 +58,12 @@ namespace Sniffer
             }
 
             packetReceived(packetLength);
+        }
+
+        // Check for start of frame interrupt
+        else if ((irq_status0 & RFCORE_SFR_RFIRQF0_SFD) == RFCORE_SFR_RFIRQF0_SFD)
+        {
+            led_yellow.on();
         }
         else // This should not happen (could be RFCORE_SFR_RFIRQF0_FIFOP which means packet can't be valid)
         {
