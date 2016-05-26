@@ -95,7 +95,7 @@ def selectSerialPortFromList(ports):
             else:
                 return ports[selectedPort]
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError, SystemExit):
             return None
 
         except:
@@ -121,7 +121,7 @@ def pickRadioChannel():
     while (channel < 11 or channel > 26) and channel != 0:
         try:
             channel = int(INPUT('Select the IEEE 802.15.4 channel number (11-26, 0 to exit): '))
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError, SystemExit):
             print('')
             return None
         except:
@@ -138,10 +138,13 @@ def createPipe(name, force):
     if platform != 'Windows':
         if os.path.exists(name):
             if not force:
-                response = str(INPUT('File ' + name + ' already exists. Delete it and continue? [y/N] '))
-                if response == 'y' or response == 'Y':
-                    os.remove(name)
-                else:
+                try:
+                    response = str(INPUT('File ' + name + ' already exists. Delete it and continue? [y/N] '))
+                    if response == 'y' or response == 'Y':
+                        os.remove(name)
+                    else:
+                        return False
+                except (KeyboardInterrupt, EOFError, SystemExit):
                     return False
             else:
                 os.remove(name)
@@ -161,10 +164,13 @@ def createPipe(name, force):
 
 
 def removePipe(name):
-    if platform != 'Windows':
-        os.remove(name)
-    else:
-        output.close()
+    try:
+        if platform != 'Windows':
+            os.remove(name)
+        else:
+            output.close()
+    except Exception as e:
+        print('ERROR: Failed to remove pipe. Exception: ' + str(e))
 
 
 def startWireshark(executableName, pipeName):
@@ -230,14 +236,14 @@ def calcRadioCRC(msg):
         crc = precompiled_crc16_table[(crc ^ val) & 0xff] ^ (crc >> 8)
     return crc
     crc ^= 0xFFFF
-    return crc ^ 0xffff;
+    return crc ^ 0xffff
 
 
 def calcCRC(msg):
     crc = 0xFFFF
     for c in msg:
         crc = precompiled_crc16_table[c ^ ((crc >> 8) & 0xFF)] ^ ((crc << 8) & 0xFFFF)
-    return crc;
+    return crc
 
 
 def decode(msg, quiet=False):
@@ -295,10 +301,10 @@ def encode(msg):
     result = bytearray()
     result.append(HDLC_FLAG)
     for c in msg:
-        result.extend(encodeByte(c));
+        result.extend(encodeByte(c))
 
-    result.extend(encodeByte((crc >> 8) & 0xFF));
-    result.extend(encodeByte(crc & 0xFF));
+    result.extend(encodeByte((crc >> 8) & 0xFF))
+    result.extend(encodeByte(crc & 0xFF))
 
     result.append(HDLC_FLAG)
     return result
@@ -510,6 +516,11 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
         else:
             print('ERROR: Unknown error. IOError: ' + str(e))
 
+    except Exception as e:
+        serialWriteStop()
+        snifferThreadTerminated = True
+        print('ERROR: Unknown exception thrown, assuming wireshark stopped. Exception: ' + str(e))
+
 
 def parseArguments():
     parser = argparse.ArgumentParser(description='IEEE 802.15.4 Sniffer')
@@ -588,7 +599,7 @@ def main():
         print('Starting wireshark...')
         try:
             wiresharkProcess = startWireshark(args.wireshark_executable, args.pipe_name)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError, SystemExit):
             removePipe(args.pipe_name)
             return
 
@@ -605,10 +616,13 @@ def main():
         print('Creating pcap file...')
         if os.path.exists(args.pcap_file):
             if not args.force:
-                response = str(INPUT('File ' + args.pcap_file + ' already exists. Delete it and continue? [y/N] '))
-                if response == 'y' or response == 'Y':
-                    os.remove(args.pcap_file)
-                else:
+                try:
+                    response = str(INPUT('File ' + args.pcap_file + ' already exists. Delete it and continue? [y/N] '))
+                    if response == 'y' or response == 'Y':
+                        os.remove(args.pcap_file)
+                    else:
+                        return
+                except (KeyboardInterrupt, EOFError, SystemExit):
                     return
             else:
                 os.remove(args.pcap_file)
@@ -623,10 +637,15 @@ def main():
     def cleanup():
         serialWriteStop()
 
-        if outputIsFile:
-            output.close()
-        else:
-            win32pipe.DisconnectNamedPipe(output)
+        try:
+            if outputIsFile:
+                output.close()
+            else:
+                win32pipe.DisconnectNamedPipe(output)
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        except Exception as e:
+            print('ERROR: Failed to close pipe. Exception: ' + str(e))
 
         if args.pcap_file == None:
             removePipe(args.pipe_name)
@@ -640,7 +659,14 @@ def main():
             sniffingThread = threading.Thread(target=snifferThread, args=[args.channel, not args.keep_bad_fcs, args.replace_fcs])
             sniffingThread.start()
 
-            INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
+            try:
+                INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
+            except EOFError:
+                # On windows when pressing CTRL+C there will be a KeyboardInterrupt after this EOFError.
+                # This interrupt should not arrive when we are already cleaning up.
+                # On Linux and Mac OS X the KeyboardInterrupt is just fired and this code isn't even executed.
+                time.sleep(0.1)
+
             stopSniffingThread = True
             sniffingThread.join()
 
@@ -660,13 +686,14 @@ def main():
             args.channel = pickRadioChannel()
             if args.channel == None:
                 break
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         stopSniffingThread = True
         sniffingThread.join()
-        pass
-    except:
-        cleanup()
-        raise
+
+    except Exception as e:
+        stopSniffingThread = True
+        sniffingThread.join()
+        print('ERROR: Unknown exception thrown: ' + str(e))
 
     cleanup()
 
