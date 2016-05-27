@@ -13,14 +13,9 @@ namespace Sniffer
 {
     void Serial::initialize()
     {
-        // Enable the UART
         uart.enable(BAUDRATE, UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE, UART_TXINT_MODE_EOT);
 
-        // Send the READY message to the host
         SerialSend::initialize();
-        SerialSend::sendReadyPacket();
-
-        // Enable the byte received interrupt
         SerialReceive::initialize();
     }
 

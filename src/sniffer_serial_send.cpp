@@ -21,6 +21,9 @@ namespace Sniffer
 
         // The second byte in the transmit buffer is a fixed type indicating that we are sending a packet
         uartTxBuffer[1] = SerialDataType::Packet;
+
+        // Tell the host that we are ready to start sniffing
+        sendReadyPacket();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -94,6 +97,7 @@ namespace Sniffer
         uint16_t crc = CRC_INIT;
         crc = crcCalculationStep(uartTxBuffer[1], crc);
         crc = crcCalculationStep(dataLength + 2, crc);
+
         for (uint8_t i = 1; i <= dataLength; ++i)
         {
             uint8_t& byte = buffer[bufferIndexSerialSend + i];
@@ -104,7 +108,7 @@ namespace Sniffer
 
         // Escape the CRC bytes
         addByteToHdlc((crc >> 8) & 0xFF);
-        addByteToHdlc((crc >> 0) & 0xFF);
+        addByteToHdlc(crc & 0xFF);
 
         // Add the ending HDLC_FLAG byte
         uartTxBuffer[uartTxBufferLen++] = HDLC_FLAG;
