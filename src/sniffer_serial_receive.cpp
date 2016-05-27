@@ -189,15 +189,14 @@ namespace Sniffer
         {
             // Move the acked index forward
             // When passing the serial index we must move it forward as well
-            uint16_t newBufferIndexAcked = receivedIndex;
-            if (((newBufferIndexAcked < bufferIndexAcked)
-              && (bufferIndexSerialSend >= bufferIndexAcked || bufferIndexSerialSend < newBufferIndexAcked))
-             || ((newBufferIndexAcked > bufferIndexAcked)
-              && (bufferIndexSerialSend >= bufferIndexAcked && bufferIndexSerialSend < newBufferIndexAcked)))
+            if (((receivedIndex < bufferIndexAcked)
+              && (bufferIndexSerialSend >= bufferIndexAcked || bufferIndexSerialSend < receivedIndex))
+             || ((receivedIndex > bufferIndexAcked)
+              && (bufferIndexSerialSend >= bufferIndexAcked && bufferIndexSerialSend < receivedIndex)))
             {
-                bufferIndexSerialSend = newBufferIndexAcked + buffer[receivedIndex];
+                bufferIndexSerialSend = receivedIndex + buffer[receivedIndex];
             }
-            bufferIndexAcked = newBufferIndexAcked;
+            bufferIndexAcked = receivedIndex;
         }
         else
             receivedInvalidMessage();
@@ -214,8 +213,8 @@ namespace Sniffer
         if (checkReceivedIndexAndSeqNr(receivedIndex, receivedSeqNr))
         {
             // Move the acked index forward and resend everything that the host hasn't received yet
+            bufferIndexSerialSend = receivedIndex + buffer[receivedIndex];
             bufferIndexAcked = receivedIndex;
-            bufferIndexSerialSend = bufferIndexAcked + buffer[receivedIndex];
         }
         else
             receivedInvalidMessage();
