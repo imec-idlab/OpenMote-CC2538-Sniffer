@@ -464,37 +464,40 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
     packetProcessor = PacketProcessor(discardPacketsWithBadCRC, replaceFCS)
 
     try:
+        lastByteTime = time.time()
         while not stopSniffingThread:
-            c = ser.read(1)
-            if len(c) > 0:
-                c = bytearray(c)[0]  # c is always a single byte, but it was returned as an array
-                if not receiving:
-                    receiving = True
-                    msg = bytearray()
+            if ser.in_waiting > 0:
+                lastByteTime = time.time()
+                receivedBytes = ser.read(ser.in_waiting)
+                for c in bytearray(receivedBytes):
+                    if not receiving:
+                        receiving = True
+                        msg = bytearray()
 
-                    if c != HDLC_FLAG:
-                        print('WARNING: encountered unexpected byte, assuming out of sync')
-                        msg.append(c)
-                else:
-                    if c == HDLC_FLAG:
-                        if len(msg) == 0:
-                            print('WARNING: out of sync detected')
-                        else:
-                            receiving = False
-                            if not packetProcessor.processPacket(decode(msg)):
-                                # Something happened with the OpenMote, try to connect again
-                                if not connectToOpenMote(channel):
-                                    return  # Connection to OpenMote lost, terminate sniffer
-
-                                msg = bytearray()
+                        if c != HDLC_FLAG:
+                            print('WARNING: encountered unexpected byte, assuming out of sync')
+                            msg.append(c)
+                    else:
+                        if c == HDLC_FLAG:
+                            if len(msg) == 0:
+                                print('WARNING: out of sync detected')
+                            else:
                                 receiving = False
-                                packetProcessor.resetVariables()
-                                continue
+                                if not packetProcessor.processPacket(decode(msg)):
+                                    # Something happened with the OpenMote, try to connect again
+                                    if not connectToOpenMote(channel):
+                                        return  # Connection to OpenMote lost, terminate sniffer
 
-                    else: # Not the closing byte
-                        msg.append(c)
+                                    msg = bytearray()
+                                    receiving = False
+                                    packetProcessor.resetVariables()
+                                    continue
 
-            else: # No character was read
+                        else: # Not the closing byte
+                            msg.append(c)
+
+            # Buffer is empty, check if timeout was reached
+            elif time.time() - lastByteTime > SERIAL_TIMEOUT:
                 if receiving:
                     receiving = False
                     print('WARNING: expected another byte, assuming out of sync')
