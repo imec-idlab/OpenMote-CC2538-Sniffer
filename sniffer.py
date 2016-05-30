@@ -466,9 +466,9 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
     try:
         lastByteTime = time.time()
         while not stopSniffingThread:
-            if ser.in_waiting > 0:
+            if ser.inWaiting() > 0:
                 lastByteTime = time.time()
-                receivedBytes = ser.read(ser.in_waiting)
+                receivedBytes = ser.read(ser.inWaiting())
                 for c in bytearray(receivedBytes):
                     if not receiving:
                         receiving = True
