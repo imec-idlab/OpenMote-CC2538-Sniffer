@@ -128,7 +128,7 @@ namespace Sniffer
 
         // Wait for ongoing DMA to complete
         // It is fast enough to wait inside this interrupt, so there is no reason to use DMA interrupts
-        while (HWREG(UDMA_ENASET))
+        while (HWREG(UDMA_ENASET) & 1)
             ;
 
         // Correct the RSSI byte (which is stored in the first of the 2 FCS bytes)
