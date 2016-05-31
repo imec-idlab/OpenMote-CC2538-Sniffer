@@ -28,7 +28,7 @@ If the OpenMote is connected to the PC with a OpenBase then just run the flash-b
 python flash-bsl.py
 ```
 
-If you get the message `ERROR: Can't connect to target. Ensure boot loader is started.` then you will have to enter the Bootloader Backdoor first. If the software that is already flashed on the OpenMote supports it (e.g. this sniffer or a OpenWSN program) then you should be able to do this by just pressing the USER button. If all leds turned on after doing this and it still gives this error then press RESET and try again. If the USER button was not configured to flash the OpenMote then you will have to press the RESET button while the ON/SLEEP pin on the OpenBase is connected to the GND pin.
+If you get the message `ERROR: Can't connect to target. Ensure boot loader is started.` then you will have to enter the Bootloader Backdoor first. If the software that is already flashed on the OpenMote supports it (e.g. this sniffer or an OpenWSN program) then you should be able to do this by just pressing the USER button. If all leds turned on after doing this and it still gives this error then press RESET and try again. If the USER button was not configured to flash the OpenMote then you will have to press the RESET button while the ON/SLEEP pin on the OpenBase is connected to the GND pin.
 
 ## Running the sniffer
 Now that the peripheral is running the required software, it is time to run a host program that communicates with it over the USB cable (which is acting as a serial port).
@@ -73,8 +73,8 @@ sudo gpasswd -a $USER dialout
 
 Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a second and try again.
 
-### Windows: latency
-The default serial settings on Windows cause relatively large delays in the communication. The buffer in the OpenMote is large enough to handle these delays, but when sniffing with very high network load, any extra delay (e.g. waiting longer on the hard drive when writing to a pcap file) can cause the buffer to get full and some packets to be dropped. In order to reduce the latency, a small change is required in the settings of the COM port.
+### Windows: serial latency
+The default serial settings on Windows cause relatively large delays in the communication. This may occasionally cause the buffer to get full and some packets to be dropped under very high network load. In order to reduce the latency, a small change is required in the settings of the COM port.
 
 1. Control Panel -> Device Manager -> Ports (COM & LPT) -> {Select your USB Serial Port}
 2. Right click and select "Properties"
