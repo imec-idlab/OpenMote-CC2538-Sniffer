@@ -606,18 +606,19 @@ def main():
         print('Starting wireshark...')
         try:
             wiresharkProcess = startWireshark(args.wireshark_executable, args.pipe_name)
+
+            print('Waiting for wireshark to be ready...')
+            if platform != 'Windows':
+                output = open(args.pipe_name, 'wb', buffering=0)
+                outputIsFile = True
+            else:
+                win32pipe.ConnectNamedPipe(output, None)
+                outputIsFile = False
+            print('Connected to wireshark')
+
         except (KeyboardInterrupt, EOFError, SystemExit):
             removePipe(args.pipe_name)
             return
-
-        print('Waiting for wireshark to be ready...')
-        if platform != 'Windows':
-            output = open(args.pipe_name, 'wb', buffering=0)
-            outputIsFile = True
-        else:
-            win32pipe.ConnectNamedPipe(output, None)
-            outputIsFile = False
-        print('Connected to wireshark')
 
     else: # Write data to pcap file instead of real-time monitoring with wireshark
         print('Creating pcap file...')
