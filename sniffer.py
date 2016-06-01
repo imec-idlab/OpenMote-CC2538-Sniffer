@@ -470,7 +470,7 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
             else:
                 # The serial buffer is empty, wait for next byte
                 receivedBytes = bytearray()
-                while len(receivedBytes) == 0:
+                while len(receivedBytes) == 0 and not stopSniffingThread:
                     receivedBytes = ser.read(1)
 
                     # Check if timeout was reached
