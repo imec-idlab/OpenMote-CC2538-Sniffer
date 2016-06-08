@@ -60,6 +60,7 @@ ser = serial.Serial()
 output = None
 outputIsFile = True
 snifferThreadTerminated = False
+enableWarnings = False
 
 
 def getSerialPortList():
@@ -261,27 +262,27 @@ def decode(msg, quiet=False):
                 result.append(c)
 
     if len(result) < 4:
-        if not quiet:
+        if enableWarnings and not quiet:
             print('WARNING: Received message too short')
         return ''
 
     if calcCRC(result[:-2]) != ((result[-2] << 8) + result[-1]):
-        if not quiet:
+        if enableWarnings and not quiet:
             print('WARNING: Received message had incorrect serial CRC')
         return ''
 
     if result[0] != SerialDataType.Packet and result[0] != SerialDataType.Ready:
-        if not quiet:
+        if enableWarnings and not quiet:
             print('WARNING: Received message had invalid type')
         return ''
 
     if result[1] != len(result) - 2:
-        if not quiet:
+        if enableWarnings and not quiet:
             print('WARNING: Received message had incorrect length byte')
         return ''
 
     if result[0] == SerialDataType.Packet and len(result) < 8:
-        if not quiet:
+        if enableWarnings and not quiet:
             print('WARNING: Received message too short for type Packet')
         return ''
 
@@ -477,7 +478,8 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
                     if len(receivedBytes) == 0:
                         if receiving:
                             receiving = False
-                            print('WARNING: expected another byte, assuming out of sync')
+                            if enableWarnings:
+                                print('WARNING: expected another byte, assuming out of sync')
                             serialWriteNack(packetProcessor.lastIndex, packetProcessor.lastSeqNr)
                         else:
                             # We haven't received any new packets for a moment, if there are still unacknowledged bytes, acknowledge them now
@@ -489,12 +491,14 @@ def snifferThread(channel, discardPacketsWithBadCRC, replaceFCS):
                     msg = bytearray()
 
                     if c != HDLC_FLAG:
-                        print('WARNING: encountered unexpected byte, assuming out of sync')
+                        if enableWarnings:
+                            print('WARNING: encountered unexpected byte, assuming out of sync')
                         msg.append(c)
                 else:
                     if c == HDLC_FLAG:
                         if len(msg) == 0:
-                            print('WARNING: out of sync detected')
+                            if enableWarnings:
+                                print('WARNING: out of sync detected')
                         else:
                             receiving = False
                             if not packetProcessor.processPacket(decode(msg)):
@@ -546,7 +550,8 @@ def parseArguments():
     parser.add_argument('--replace-fcs', action='store_true',
                         help='Replace the normal radio FCS by the TI CC24XX FCS which contains the RSSI and LQI')
     parser.add_argument('--keep-bad-fcs', action='store_true',
-                        help='Don\'t discard packets that have a bad checksum')
+                        help="Don't discard packets that have a bad checksum")
+    parser.add_argument('--enable-warnings', action='store_true', help='Enable some warnings that are only useful for debugging')
     return parser.parse_args()
 
 
@@ -556,8 +561,11 @@ def main():
     global outputIsFile
     global stopSniffingThread
     global snifferThreadTerminated
+    global enableWarnings
 
     args = parseArguments()
+
+    enableWarnings = args.enable_warnings
 
     if args.channel != None and (args.channel < 11 or args.channel > 26):
         print('Channel should be between 11 and 26')
@@ -671,7 +679,7 @@ def main():
                 INPUT('Press return key to pause sniffer (and to choose a different channel)\n')
             except EOFError:
                 # On windows when pressing CTRL+C there will be a KeyboardInterrupt after this EOFError.
-                # This interrupt should not arrive when we are already cleaning up.
+                # This KeyboardInterrupt should not arrive while we are already cleaning up.
                 # On Linux and Mac OS X the KeyboardInterrupt is just fired and this code isn't even executed.
                 time.sleep(0.1)
 
