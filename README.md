@@ -73,6 +73,12 @@ sudo gpasswd -a $USER dialout
 
 Note that this error can also appear if you try to run the script directly after the OpenMote was plugged in. Wait a second and try again.
 
+### Linux: Couldn't run /usr/bin/dumpcap in child process: Permission denied
+Wireshark will not be able to capture data if you do not have the necessary permissions. Add your user to the 'wireshark' group and log out afterwards to allow the changes to take effect.
+``` bash
+sudo gpasswd -a $USER wireshark
+```
+
 ### Windows: serial latency
 The default serial settings on Windows cause relatively large delays in the communication. This may occasionally cause the buffer to get full and some packets to be dropped under very high network load. In order to reduce the latency, a small change is required in the settings of the COM port.
 
@@ -81,5 +87,5 @@ The default serial settings on Windows cause relatively large delays in the comm
 3. Select the "Port Settings" tab
 4. Click the "Advanced" button at the bottom
 5. Change the Latency Timer (msec) to 1
-6. Change the USB Transfer Sizes to 64
+6. Keep the USB Transfer Sizes at 4096
 7. Save (and reboot)
