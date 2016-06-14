@@ -24,7 +24,7 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define BUFFER_LEN                  25000   // Size of buffer in which packets are stored that have been received on the radio
+#define BUFFER_LEN                  24000   // Size of buffer in which packets are stored that have been received on the radio
 #define RETRANSMIT_THRESHOLD        10000   // After how many unacknowledged bytes we will retransmit the buffer contents to the pc
 #define SERIAL_RX_BUFFER_LEN        256     // How big is the buffer for incoming serial messages
 #define SERIAL_RX_MAX_MESSAGE_LEN   8       // The maximum length of an incoming serial message
